@@ -1,0 +1,885 @@
+import asyncio
+import csv
+import html
+import io
+import logging
+import math
+import re
+import secrets
+import time
+from datetime import datetime, timezone
+
+from telegram import (BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats,
+                      BotCommandScopeAllGroupChats, BotCommandScopeAllChatAdministrators,
+                      BotCommandScopeChat, MenuButtonCommands, InlineQueryResultCachedPhoto, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton,
+                      InlineKeyboardMarkup, MessageOriginChannel)
+from telegram.error import BadRequest, RetryAfter, TelegramError
+from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, MessageHandler, filters
+
+from . import account, welcome
+from .config import Config
+from .source_export import source_zip
+from .store import RuleError, Store, cents, money
+from .mongo_store import MongoStore
+from pymongo.errors import PyMongoError
+
+log = logging.getLogger(__name__)
+POLLING_UPDATES = ["message", "callback_query", "inline_query"]
+OWNER_ACTIONS = {
+    "zip": "Bot code ZIP ယူရန်: /zip (Owner DM only)",
+    "new": "Card အသစ်တင်ရန်",
+    "auctions": "လေလံစာရင်း",
+    "view": "လေလံကြည့်ရန်: /view ID",
+    "bids": "Bid မှတ်တမ်း: /bids ID",
+    "close": "Winner သတ်မှတ်ပြီးပိတ်ရန်: /close ID",
+    "cancelauction": "လေလံဖျက်သိမ်းရန်: /cancelauction ID",
+    "extend": "အချိန်တိုးရန်: /extend ID minutes",
+    "pause": "Bid အားလုံးခဏရပ်ရန်",
+    "resume": "Bid ပြန်ဖွင့်ရန်",
+    "setchannel": "Channel သတ်မှတ်ရန်: /setchannel -100…",
+    "setgroup": "Discussion group သတ်မှတ်ရန်: /setgroup -100…",
+    "increment": "လေလံအသစ်များအတွက် increment: /increment 50.00",
+    "ban": "Bid ပိတ်ရန်: /ban USER_ID",
+    "unban": "Bid ပြန်ဖွင့်ရန်: /unban USER_ID",
+    "banned": "ပိတ်ထားသူစာရင်း",
+    "stats": "စာရင်းချုပ်",
+    "export": "Bid CSV ထုတ်ရန်: /export ID",
+    "rules": "စည်းကမ်းကြည့်/ပြင်ရန်: /rules စည်းကမ်းစာသား",
+    "settings": "လက်ရှိ settings",
+    "check": "Channel/group ချိတ်ဆက်မှုစစ်ရန်",
+    "welcome": "User /start ပုံ၊ စာ၊ buttons ပြင်ရန်",
+    "auth": "Reply: /auth + 20 သို့ /auth - 5 | ID: /auth USER_ID + 20",
+    "credit": "Credit ထည့်ရန်: /credit USER_ID 10.00 note",
+    "debit": "Credit နုတ်ရန်: /debit USER_ID 10.00 note",
+    "wallet": "User wallet စစ်ရန်: /wallet USER_ID",
+    "walletmode": "Bid ငွေကို ယာယီထိန်းထားရန်: /walletmode on",
+}
+OWNER_ONLY_COMMANDS = (set(OWNER_ACTIONS) - {"auctions", "rules"}) | {
+    "panel", "help", "draftcancel", "welcomehelp", "welcomecancel",
+}
+USER_COMMANDS = [
+    BotCommand("start", "Bot စတင်ရန်"),
+    BotCommand("menu", "ကိုယ့်အကောင့် menu"),
+    BotCommand("history", "နောက်ဆုံး လေလံမှတ်တမ်း 10 ခု"),
+    BotCommand("wins", "ကိုယ်နိုင်ခဲ့သော လေလံများ"),
+    BotCommand("auctions", "ဖွင့်ထားသော လေလံများ"),
+    BotCommand("bal", "ကိုယ့် $ လက်ကျန်စစ်ရန်"),
+    BotCommand("transactions", "$ အဝင်အထွက်မှတ်တမ်း"),
+]
+GROUP_COMMANDS = [
+    BotCommand("bid", "လေလံ comments မှာ /bid 10.50"),
+    BotCommand("rules", "လေလံ comments မှာ စည်းကမ်းကြည့်ရန်"),
+]
+
+PROMPTS = {
+    "photo": "📷 Card photo ပို့ပါ။ /draftcancel နဲ့ ရပ်နိုင်ပါတယ်။",
+    "name": "Card name ရေးပါ (စာလုံး 60 အထိ)။",
+    "anime": "Anime name ရေးပါ (စာလုံး 60 အထိ)။",
+    "rarity": "Rarity ရေးပါ (ဥပမာ SSR, UR; စာလုံး 24 အထိ)။",
+    "start": "Starting bid USD ရေးပါ။ ဥပမာ 5.00",
+    "duration_seconds": "တင်ပြီး ဘယ်လောက်ကြာရင် ပိတ်မလဲ? ကြာချိန်ကို စာပို့ပါ။ ဥပမာ 1sec, 5min, 1hours, 1day။ Publish တင်ပြီးမှ အချိန်စတွက်ပါမယ်။",
+}
+STEPS = list(PROMPTS)
+
+
+AUTH_USAGE = "User message ကို reply လုပ်ပြီး /auth + 20 သို့ /auth - 5 ရေးပါ။ ID ဖြင့် /auth USER_ID + 20 သို့ /auth USER_ID - 5 ရေးနိုင်ပါတယ်။"
+
+
+def auth_adjustment(args, message):
+    if not args:
+        raise RuleError(AUTH_USAGE)
+    if re.fullmatch(r"[0-9]{1,19}", args[0]):
+        user_id = int(args[0])
+        parts = args[1:]
+    else:
+        reply = message.reply_to_message
+        user = reply.from_user if reply and not reply.sender_chat else None
+        if not user or user.is_bot:
+            raise RuleError("User ရဲ့ message ကို reply လုပ်ပါ။ Bot/channel/anonymous message ကို မသုံးနိုင်ပါ။ " + AUTH_USAGE)
+        user_id = user.id
+        parts = args
+    if not 0 < user_id < 2**63:
+        raise RuleError("မှန်ကန်သော numeric user ID ကို သုံးပါ။")
+    if not parts:
+        raise RuleError(AUTH_USAGE)
+    if parts[0] in {"+", "-"}:
+        if len(parts)<2:
+            raise RuleError(AUTH_USAGE)
+        sign, value, note = parts[0], parts[1], " ".join(parts[2:])
+    elif parts[0].startswith(("+", "-")):
+        sign, value, note = parts[0][0], parts[0][1:], " ".join(parts[1:])
+    else:
+        raise RuleError(AUTH_USAGE)
+    amount = cents(value)
+    return user_id, amount if sign=="+" else -amount, note
+
+
+def duration_seconds(value):
+    value = value.translate(str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")).strip().lower()
+    match = re.fullmatch(r"([0-9]{1,7})\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|မိနစ်|h|hr|hrs|hour|hours|d|day|days)?", value)
+    if match:
+        unit = match[2] or "min"  # Preserve older minute-only inputs.
+        factor = 1 if unit.startswith("s") else 3600 if unit.startswith("h") else 86400 if unit.startswith("d") else 60
+        seconds = int(match[1]) * factor
+        if 1 <= seconds <= 604800:
+            return seconds
+    raise RuleError("ကြာချိန်ကို 1sec မှ 7days အတွင်းရေးပါ။ ဥပမာ 1sec, 5min, 1hours, 1day။")
+
+
+def duration_text(seconds):
+    remaining = max(0, math.ceil(seconds))
+    parts = []
+    for size, label in ((86400, "day"), (3600, "hour"), (60, "min"), (1, "sec")):
+        count, remaining = divmod(remaining, size)
+        if count:
+            parts.append(f"{count}{label}")
+    return " ".join(parts) or "0sec"
+
+
+def button(text, data, style="primary"):
+    # api_kwargs forwards the official Bot API style field with our pinned PTB.
+    return InlineKeyboardButton(text, callback_data=data, api_kwargs={"style": style})
+
+
+def date_text(value):
+    return datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def caption(row, now=None):
+    esc = html.escape
+    status = row.get("status", "active")
+    label = {"active": "🟢OPEN FOR BIDS", "publishing": "🟢OPEN FOR BIDS", "closed": "🏁AUCTION ENDED", "cancelled": "🚫AUCTION CANCELLED"}[status]
+    current = money(row["highest"]) if row.get("highest") is not None else "No bids yet"
+    winner = "—"
+    if row.get("winner_id"):
+        winner = f'<a href="tg://user?id={row["winner_id"]}">{esc(row["winner_name"])}</a>'
+    result = f"👑HIGHEST BIDDER\n{winner}"
+    if status == "closed":
+        result = f"🏆WINNER\n{winner}" if row.get("winner_id") else "🏆WINNER\nNo winner — no bids"
+    if status == "cancelled":
+        result = "🏆WINNER\nNone — auction cancelled"
+    if status in {"closed", "cancelled"}:
+        end_text = "0sec"
+    elif row.get("duration_seconds") and (row.get("step") == "confirm" or status == "publishing"):
+        end_text = duration_text(row["duration_seconds"])
+    else:
+        end_text = duration_text(row["ends"] - (time.time() if now is None else now))
+    payment = "Auction ပြီးဆုံးပြီး သင့် Guess harem ထဲ 3min အတွင်း ကဒ်ဝင်လာပါလိမ့်မယ်။"
+    if row.get("wallet_required"):
+        payment += "\n" + ("Winner wallet မှ ငွေဖြတ်ပြီး။" if status == "closed" and row.get("highest") is not None else "Winner wallet မှ ငွေဖြတ်ပါမယ်။")
+    if status == "cancelled" or (status == "closed" and not row.get("winner_id")):
+        payment = "အနိုင်ရသူမရှိသဖြင့် ကဒ်ပေးပို့မှု မရှိပါ။"
+    bid_help = '💬PLACE YOUR BID\nComment မှာ အောက်ပါပုံစံအတိုင်း တင်ပါ။\n\n<code>/bid 10.50</code>\n\n' if status in {"active", "publishing"} else ""
+    return (
+        f'🎴WAIFU AUCTION #{row["id"]}\n{label}\n\n'
+        f'┌─CHARACTER─────\n│ 👤 {esc(row["name"])}\n'
+        f'│ 🎬 Anime: {esc(row["anime"])}\n│ 💎 Rarity: {esc(row["rarity"])}\n└──────────────────\n\n'
+        f'💰STARTING BID\n{money(row["start"])}\n\n📈MIN. INCREMENT\n{money(row["increment"])}\n\n'
+        f'🔥CURRENT BID\n{current}\n\n{result}\n\n'
+        f'⏳TIME LEFT\n{end_text}\n\n━━━━━━━━━━━━━━━━━━\n\n'
+        f'{bid_help}💵 Currency: USD\n\n🤝PAYMENT\n{payment}'
+    )
+
+
+class AuctionBot:
+    def __init__(self, config):
+        self.config = config
+        self.store = MongoStore(config.mongodb_uri, config.mongodb_database) if config.mongodb_uri else Store(config.database)
+        if config.require_wallet and not config.mongodb_uri:
+            self.store.enable_wallet()
+        # Environment IDs bootstrap an empty DB; owner settings survive restarts.
+        for key, value in [("channel_id", config.channel_id), ("group_id", config.group_id)]:
+            if value and not self.store.get(key):
+                self.store.set(key, value)
+        self.edit_after = {}
+        self.last_bid_at = {}
+        self.last_caption_at = {}
+        self.bid_edit_due = {}
+        self.winner_retry_after = {}
+        self.global_edit_after = 0
+        self.tick_lock = asyncio.Lock()
+
+    def owner(self, update):
+        return bool(update.effective_user and update.effective_user.id in self.config.owners
+                    and update.effective_chat and update.effective_chat.type == "private")
+
+    def group(self, update):
+        return bool(update.effective_chat and update.effective_chat.type == "supergroup"
+                    and str(update.effective_chat.id) == self.store.get("group_id"))
+
+    async def panel(self, message):
+        positive = {"new", "resume", "unban", "welcome", "credit", "auth"}
+        destructive = {"close", "cancelauction", "pause", "ban", "debit"}
+        buttons = [button(f"{i}. {key}", f"action:{key}",
+                          "success" if key in positive else "danger" if key in destructive else "primary")
+                   for i, key in enumerate(OWNER_ACTIONS, 1)]
+        await message.reply_text(f"👑 Owner Panel — လုပ်ဆောင်ချက် {len(OWNER_ACTIONS)}\n/new — Card အသစ် | /welcome — User /start ပြင်ရန်",
+                                 reply_markup=InlineKeyboardMarkup([buttons[i:i+2] for i in range(0, len(buttons), 2)]))
+
+    async def linked(self, bot):
+        channel_id, group_id = self.store.get("channel_id"), self.store.get("group_id")
+        if not channel_id or not group_id:
+            raise RuleError("/setchannel နှင့် /setgroup အရင်သတ်မှတ်ပါ။")
+        channel = await bot.get_chat(int(channel_id))
+        group = await bot.get_chat(int(group_id))
+        if channel.type != "channel" or group.type != "supergroup" or channel.linked_chat_id != group.id or group.linked_chat_id != channel.id:
+            raise RuleError("Telegram Channel Settings > Discussion မှာ ဒီ group ကို ချိတ်ထားရပါမယ်။")
+        member = await bot.get_chat_member(channel.id, bot.id)
+        if member.status not in ("administrator", "creator") or (member.status == "administrator" and not member.can_post_messages):
+            raise RuleError("Bot ကို channel admin + Post Messages permission ပေးပါ။")
+        member = await bot.get_chat_member(group.id, bot.id)
+        if member.status not in ("administrator", "creator"):
+            raise RuleError("Bot ကို discussion group admin ပေးပါ။")
+
+    def remember(self, message):
+        """Trust only Telegram automatic forwards from the configured channel."""
+        if not message or str(message.chat_id) != self.store.get("group_id"):
+            return
+        origin = message.forward_origin
+        if message.is_automatic_forward and isinstance(origin, MessageOriginChannel) and str(origin.chat.id) == self.store.get("channel_id"):
+            row = self.store.find_post(origin.chat.id, origin.message_id, message.chat_id)
+            auction_id = row["id"] if row else None
+            if auction_id is None:
+                # Recover a sendPhoto whose successful response was lost in transit.
+                match = re.match(r"🎴\s*WAIFU AUCTION #(\d+)\n", message.caption or "", re.IGNORECASE)
+                if match:
+                    candidate = self.store.recoverable(int(match[1]), origin.chat.id, message.chat_id)
+                    if candidate and message.photo and candidate["photo"] == message.photo[-1].file_id:
+                        auction_id = candidate["id"]
+            if auction_id:
+                self.store.attach(auction_id, origin.message_id, message.message_id, int(origin.date.timestamp()))
+
+    def resolve(self, message):
+        reply=message.reply_to_message
+        # Forwarded/inline copies are not authoritative auction comment roots.
+        for candidate in (message,reply):
+            if candidate and (candidate.via_bot or (candidate.forward_origin and not candidate.is_automatic_forward)):
+                return None
+        self.remember(message)
+        self.remember(reply)
+        thread=message.message_thread_id
+        reply_auction=self.store.resolve(message.chat_id,[reply.message_id]) if reply else None
+        if thread:
+            auction_id=self.store.thread_auction(message.chat_id,thread)
+            if not auction_id:
+                return None
+            if reply_auction and reply_auction!=auction_id:
+                return None
+            if reply and reply.message_thread_id and reply.message_thread_id!=thread:
+                return None
+        else:
+            auction_id=reply_auction
+            if reply and reply.message_thread_id:
+                if self.store.thread_auction(message.chat_id,reply.message_thread_id)!=auction_id:
+                    return None
+        if auction_id:
+            self.store.map_message(message.chat_id,message.message_id,auction_id)
+        return auction_id
+
+    async def inline_search(self, update, context):
+        query=update.inline_query
+        try:
+            offset=int(query.offset or "0")
+            rows,more=self.store.search_active(query.query,offset=offset)
+        except (RuleError,ValueError,PyMongoError):
+            await query.answer([],cache_time=0,is_personal=True)
+            return
+        results=[]
+        for row in rows:
+            url=account.post_link(row)
+            if not url:
+                continue
+            minimum=row["start"] if row["highest"] is None else row["highest"]+row["increment"]
+            # Inline copies are browsing snapshots. Only the original post accepts bids.
+            text=(f'🌸 {html.escape(row["name"])}\n\n'
+                  f'📺 {html.escape(row["anime"])}\n'
+                  f'💎 ⚜️ {html.escape(row["rarity"])}\n'
+                  f'🆔 {row["id"]}\n'
+                  f'🎴Start Bid - {money(row["start"])}')
+            results.append(InlineQueryResultCachedPhoto(
+                id=str(row["id"]),photo_file_id=row["photo"],
+                title=f'#{row["id"]} · {row["name"]}',
+                description=f'{row["anime"]} · {row["rarity"]} · Next bid {money(minimum)}',
+                caption=text,parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open original post · Comments",url=url,api_kwargs={"style":"primary"})]])))
+        if not results and offset == 0:
+            text = ("ရှာထားတဲ့ကဒ်နဲ့ ကိုက်ညီတဲ့ လေလံ မတွေ့ပါ။" if query.query.strip()
+                    else "လက်ရှိ လေလံတင်ထားတဲ့ကဒ် မရှိသေးပါ။")
+            results.append(InlineQueryResultArticle(
+                id="no-auctions",title="🔎 လေလံ မတွေ့ပါ။" if query.query.strip() else "🎴 လေလံ မရှိသေးပါ။",
+                description=text,input_message_content=InputTextMessageContent(text)))
+        await query.answer(results,cache_time=0,is_personal=True,
+                           next_offset=str(offset+len(rows)) if more else "")
+
+    async def message(self, update, context):
+        # Edited bids never become fresh bids. Other groups receive no response.
+        if update.message is None:
+            return
+        message = update.message
+        private_user = bool(update.effective_chat and update.effective_chat.type == "private"
+                            and update.effective_user and not update.effective_user.is_bot)
+        if not self.owner(update) and not self.group(update) and not private_user:
+            return
+        if message.sender_chat:
+            if self.group(update):
+                self.remember(message)
+            return
+        text = message.text or ""
+        words = text.split()
+        command = words[0].split("@")[0][1:].lower() if text.startswith("/") else ""
+        if command and "@" in words[0] and words[0].split("@", 1)[1].lower() != context.bot.username.lower():
+            return
+        args = words[1:]
+        is_owner = bool(update.effective_user and update.effective_user.id in self.config.owners)
+        if not is_owner and (command in OWNER_ONLY_COMMANDS or (command == "rules" and args)):
+            return
+        try:
+            if command == "auth":
+                if update.effective_user and update.effective_user.id in self.config.owners:
+                    await self.auth_command(args, message, update.effective_user.id)
+                return
+            if self.owner(update):
+                if context.user_data.get("welcome_edit") and command not in set(OWNER_ACTIONS) | {"welcomecancel", "welcomehelp", "panel", "start", "help", "draftcancel"}:
+                    await self.welcome_input(message, update.effective_user, context)
+                elif command:
+                    await self.owner_command(command, args, message, context)
+                elif context.user_data.get("draft"):
+                    await self.draft(message, context)
+                return
+            if private_user:
+                if command == "start":
+                    await welcome.send(message, welcome.load(self.store), update.effective_user, context.bot)
+                elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "transactions"}:
+                    await self.user_command(command, args, message, update.effective_user)
+                return
+            auction_id = self.resolve(message)
+            if command == "rules" and auction_id:
+                await message.reply_text(self.store.get("rules"))
+                return
+            if command != "bid":
+                return
+            if not update.effective_user or update.effective_user.is_bot:
+                raise RuleError("User account နဲ့ပဲ bid ဆွဲနိုင်ပါတယ်။")
+            if len(args) != 1:
+                raise RuleError("ဒီ card ရဲ့ Comments ထဲမှာ /bid 10.50 ပုံစံရေးပါ။")
+            if not auction_id:
+                raise RuleError("လေလံ post ရဲ့ Comments ထဲဝင်ပြီး post ကို reply လုပ်ပါ။")
+            amount = cents(args[0])
+            name = update.effective_user.full_name[:60]
+            accepted = self.store.bid(auction_id, update.effective_user.id, name, amount, message.chat_id, message.message_id)
+            if accepted:
+                self.note_bid(auction_id)
+                await self.tick(context)
+                receipt = await message.reply_text(
+                    f"☑ Author #{auction_id} —\n\n"
+                    f"{update.effective_user.mention_html()}\n\n"
+                    f"{money(amount)} bid ဖြင့် လေလံဆွဲထားပါပီ",
+                    parse_mode="HTML",
+                )
+                self.store.map_message(message.chat_id, receipt.message_id, auction_id)
+        except (RuleError, ValueError) as exc:
+            await message.reply_text(str(exc) if isinstance(exc, RuleError) else "Command parameter မှားနေပါတယ်။ /panel မှာ အသုံးပြုပုံကြည့်ပါ။")
+        except PyMongoError:
+            await message.reply_text("Database ယာယီမရနိုင်ပါ။ ခဏစောင့်ပြီး /bal နှင့် /history မှာ စစ်ပါ။")
+        except TelegramError:
+            log.warning("Telegram operation failed; durable auction state retained")
+            await message.reply_text("Telegram request မအောင်မြင်ပါ။ /check နှင့် /auctions ကိုစစ်ပါ။")
+
+    async def auth_command(self, args, message, actor_id):
+        user_id, delta, note = auth_adjustment(args, message)
+        changed = self.store.adjust_wallet(user_id, delta, actor_id,
+            f"owner:{message.chat_id}:{message.message_id}", note)
+        if changed:
+            operation = "ထည့်" if delta>0 else "နုတ်"
+            text = f"✅ User {user_id} ကို {money(abs(delta))} {operation}ပြီးပါပြီ။"
+        else:
+            text = "ဒီ request ကို အရင်က လုပ်ပြီးပါပြီ။ ထပ်မံငွေမပြောင်းပါ။"
+        # Group confirmations don't publish a user's full wallet balance.
+        if message.chat.type == "private":
+            text += f'\nAvailable: {money(self.store.wallet_balance(user_id)["available"])}'
+        await message.reply_text(text)
+
+    async def user_command(self, command, args, message, user, *, edit=False, content_page=0):
+        if (command != "auctions" and args) or (command == "auctions" and len(args)>1):
+            raise RuleError("ကိုယ့်အကောင့်ကိုသာ စစ်နိုင်ပါတယ်။ /menu ကိုသုံးပါ။")
+        self.store.close_due()
+        markup = account.back()
+        if command == "menu":
+            markup = account.menu()
+            text = f"👤 My account · ID {user.id}\nHistory၊ နိုင်ခဲ့သောကဒ်၊ လက်ကျန်နှင့် လက်ရှိလေလံကို ရွေးကြည့်ပါ။"
+        elif command in {"history", "wins"}:
+            text = account.history(self.store, user.id, wins=command=="wins")
+        elif command == "auctions":
+            page = int(args[0])-1 if args else 0
+            text, markup = account.active(self.store, page, inline_enabled=bool(message.get_bot().supports_inline_queries))
+        elif command in {"balance", "bal"}:
+            text = account.balance(self.store, user.id)
+        elif command == "transactions":
+            text = account.transactions(self.store, user.id)
+        elif command == "close":
+            text = "Menu ပိတ်ပြီးပါပြီ။ ပြန်ဖွင့်ရန် အောက်ကခလုတ် သို့မဟုတ် /menu ကိုသုံးပါ။"
+            markup = InlineKeyboardMarkup([[account.button("👤 Open menu", "menu")]])
+        else:
+            raise RuleError("/menu ကိုပြန်ဖွင့်ပါ။")
+        if edit and message.photo:
+            text, markup = account.caption_page(text, markup, command, args, content_page)
+            await message.edit_caption(caption=text, parse_mode="HTML", reply_markup=markup)
+        elif edit:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+        else:
+            await message.reply_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+
+    async def owner_command(self, command, args, message, context):
+        if command in {"menu", "history", "wins", "balance", "bal", "transactions"}:
+            await self.user_command(command, args, message, message.from_user)
+            return
+        no_args = {"zip", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
+        one_arg = {"view", "bids", "close", "cancelauction", "setchannel", "setgroup", "increment", "ban", "unban", "export", "wallet", "walletmode"}
+        if (command in no_args and args) or (command in one_arg and len(args) != 1) or (command == "extend" and len(args) != 2):
+            raise RuleError(OWNER_ACTIONS.get(command, "Parameter မလိုပါ။"))
+        if command in ("start", "help", "panel"):
+            context.user_data.pop("welcome_edit", None)
+            await self.panel(message)
+            return
+        if command == "zip":
+            with source_zip() as archive:
+                await message.reply_document(
+                    document=archive, filename="auth-bot-code.zip",
+                    caption="📦 Bot source code + Railway files + .env.example",
+                )
+            return
+        if command == "welcome":
+            context.user_data.pop("welcome_edit", None)
+            await self.welcome_panel(message)
+            return
+        if command == "welcomehelp":
+            await message.reply_text(welcome.HELP)
+            return
+        if command == "welcomecancel":
+            context.user_data.pop("welcome_edit", None)
+            await message.reply_text("Welcome ပြင်ဆင်ခြင်း ရပ်ပြီးပါပြီ။")
+            return
+        if command == "new":
+            context.user_data.pop("welcome_edit", None)
+            context.user_data["draft"] = {"step": "photo", "nonce": secrets.token_hex(8)}
+            await message.reply_text(PROMPTS["photo"])
+            return
+        if command == "draftcancel":
+            context.user_data.pop("draft", None)
+            await message.reply_text("Draft ဖျက်ပြီးပါပြီ။")
+            return
+        if command in {"credit", "debit"}:
+            if len(args)<2:
+                raise RuleError(OWNER_ACTIONS[command])
+            user_id, amount = int(args[0]), cents(args[1])
+            changed = self.store.adjust_wallet(user_id, amount if command=="credit" else -amount,
+                message.from_user.id, f"owner:{message.chat_id}:{message.message_id}", " ".join(args[2:]))
+            available = self.store.wallet_balance(user_id)["available"]
+            result = ("✅ ပြင်ပြီးပါပြီ။" if changed else "ဒီ request ကို အရင်က လုပ်ပြီးပါပြီ။") + f" User {user_id} · Available {money(available)}"
+        elif command == "wallet":
+            user_id = int(args[0])
+            if user_id<=0:
+                raise RuleError("Positive user ID ရေးပါ။")
+            self.store.close_due()
+            await message.reply_text(account.balance(self.store,user_id),parse_mode="HTML")
+            return
+        elif command == "walletmode":
+            if args[0].lower() not in {"on","off"}:
+                raise RuleError(OWNER_ACTIONS[command])
+            if self.config.require_wallet and args[0].lower()=="off":
+                raise RuleError("Bid အတွက် wallet hold လိုအပ်ပါတယ်။ ပိတ်၍မရပါ။")
+            self.store.set("wallet_mode", int(args[0].lower()=="on"))
+            result = "✅ လေလံအသစ်များအတွက် Wallet " + args[0].lower() + " ဖြစ်ပါပြီ။ ရှိပြီးသားလေလံတွေရဲ့ payment ပုံစံ မပြောင်းပါ။"
+        elif command == "check":
+            await self.linked(context.bot)
+            result = "✅ Channel/group ချိတ်ဆက်မှုနဲ့ admin permission မှန်ပါတယ်။"
+        elif command in ("setchannel", "setgroup"):
+            chat_id = int(args[0])
+            if chat_id >= 0:
+                raise RuleError("Negative numeric chat ID ရေးပါ။ ဥပမာ -1001234567890")
+            chat = await context.bot.get_chat(chat_id)
+            if chat.type != ("channel" if command == "setchannel" else "supergroup"):
+                raise RuleError("Channel / supergroup အမျိုးအစား မမှန်ပါ။")
+            self.store.target("channel_id" if command == "setchannel" else "group_id", chat_id)
+            result = "✅ သိမ်းပြီးပါပြီ။ /check နဲ့ ချိတ်ဆက်မှု စစ်ပါ။"
+        elif command == "increment":
+            self.store.set("increment", cents(args[0]))
+            result = "✅ လေလံအသစ်တွေအတွက် increment သိမ်းပြီးပါပြီ။"
+        elif command in ("pause", "resume"):
+            self.store.set("paused", int(command == "pause"))
+            result = "⏸ Bid ခဏရပ်ထားသည်။ End time ဆက်သွားပါမယ်။" if command == "pause" else "▶️ Bid ပြန်ဖွင့်ပြီးပါပြီ။"
+        elif command in ("ban", "unban"):
+            user_id = int(args[0])
+            if user_id <= 0 or user_id in self.config.owners:
+                raise RuleError("Owner မဟုတ်တဲ့ positive user ID ရေးပါ။")
+            self.store.ban(user_id, command == "ban")
+            result = "✅ ပြင်ပြီးပါပြီ။ ယခင် bid များ ဆက်လက်အကျုံးဝင်ပါတယ်။"
+        elif command == "banned":
+            rows = self.store.banned()
+            result = "Banned IDs (ပထမ 100):\n" + ("\n".join(str(r) for r in rows) or "မရှိပါ။")
+        elif command == "rules":
+            if args:
+                value = " ".join(args)
+                if len(value) > 1000:
+                    raise RuleError("Rules စာလုံး 1000 အထိသာ ရေးပါ။")
+                self.store.set("rules", value)
+            result = self.store.get("rules")
+        elif command == "settings":
+            result = f'Wallet for new auctions: {"ON" if self.store.get("wallet_mode")=="1" else "OFF"}\nChannel: {self.store.get("channel_id") or "မသတ်မှတ်ရသေး"}\nGroup: {self.store.get("group_id") or "မသတ်မှတ်ရသေး"}\nIncrement: {money(int(self.store.get("increment")))}\nPaused: {self.store.get("paused")}\nCurrency: USD\nBid edits: immediate; bursts wait for 2 quiet seconds\nOwners: {", ".join(map(str, sorted(self.config.owners)))}'
+        elif command == "auctions":
+            result = "နောက်ဆုံး လေလံ 30:\n" + ("\n".join(f'#{r["id"]} {r["status"]} • {r["name"]}' for r in self.store.listing()) or "မရှိသေးပါ။")
+        elif command == "view":
+            row = self.store.auction(int(args[0]))
+            await message.reply_photo(row["photo"], caption=caption(row), parse_mode="HTML")
+            return
+        elif command in ("close", "cancelauction"):
+            self.store.finish(int(args[0]), "closed" if command == "close" else "cancelled")
+            result = "✅ ပိတ်ပြီးပါပြီ။ Channel post ကို နောက် update မှာ ပြင်ပေးပါမယ်။"
+        elif command == "extend":
+            self.store.extend(int(args[0]), int(args[1]))
+            result = "✅ End time တိုးပြီးပါပြီ။"
+        elif command == "bids":
+            rows = self.store.history(int(args[0]))
+            result = "နောက်ဆုံး bids 30:\n" + ("\n".join(f'{money(r["amount"])} • {r["user_id"]} • {date_text(r["created"])}' for r in rows) or "မရှိသေးပါ။")
+        elif command == "export":
+            auction_id = int(args[0])
+            self.store.auction(auction_id)
+            data = io.StringIO()
+            writer = csv.writer(data)
+            writer.writerow(["bid_id", "auction_id", "user_id", "amount_usd", "created_utc"])
+            # Numeric identifiers only: user names cannot inject spreadsheet formulas.
+            for r in self.store.export_bids(auction_id):
+                writer.writerow([r["id"], auction_id, r["user_id"], f'{r["amount"] // 100}.{r["amount"] % 100:02d}', date_text(r["created"])])
+            await message.reply_document(io.BytesIO(data.getvalue().encode("utf-8")), filename=f"auction-{auction_id}-bids.csv")
+            return
+        elif command == "stats":
+            rows, total, sales = self.store.stats()
+            result = "📊 Auctions\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows) + f"\nBids: {total}\nWinning bids (payment မစစ်ရသေး): {money(sales)}"
+        else:
+            raise RuleError("/panel မှာ command စာရင်းကြည့်ပါ။")
+        await message.reply_text(result)
+
+    async def welcome_panel(self, message):
+        await message.reply_text("👋 User /start Welcome\nပြင်လိုသည့်အရာ ရွေးပါ။ စာ format နှင့် {mention} အသုံးပြုပုံကို Help မှာကြည့်ပါ။",
+            reply_markup=InlineKeyboardMarkup([
+                [button("📷 Photo", "welcome:photo", "success"), button("📝 Formatted text", "welcome:text")],
+                [button("💻 HTML text", "welcome:html"), button("🔗 Buttons / colours", "welcome:buttons")],
+                [button("👀 Preview", "welcome:preview", "success"), button("📖 Help", "welcome:help")],
+                [button("🗑 Remove photo", "welcome:clearphoto", "danger"), button("🗑 Clear buttons", "welcome:clearbuttons", "danger")],
+                [button("❌ Cancel edit", "welcome:cancel", "danger")]]))
+
+    async def welcome_action(self, action, message, user, context):
+        if action in {"photo", "text", "html", "buttons"}:
+            context.user_data["welcome_edit"] = action
+            prompts = {
+                "photo": "Welcome photo ပို့ပါ။ Caption ပါရင် caption ကို welcome စာသားအဖြစ်ပါ သိမ်းပေးပါမယ်။ /welcomecancel နဲ့ရပ်နိုင်ပါတယ်။",
+                "text": "Welcome စာသားပို့ပါ။ Telegram မှ bold/italic/quote/spoiler စတဲ့ format လုပ်ပြီးပို့နိုင်ပါတယ်။ {mention}, {first_name}, {username}, {user_id} သုံးနိုင်ပါတယ်။ /welcomecancel နဲ့ရပ်ပါ။",
+                "html": 'HTML စာပို့ပါ။ ဥပမာ <b>မင်္ဂလာပါ {mention}</b>\n<blockquote>လေလံမှ ကြိုဆိုပါတယ်</blockquote>\n/welcomehelp မှာ format အပြည့်အစုံကြည့်ပါ။ /welcomecancel နဲ့ရပ်ပါ။',
+                "buttons": "Button တစ်ခုစီကို Name | URL | colour ပုံစံရေးပါ။\nChannel | https://t.me/example | blue\nSupport | https://t.me/example_support | green\nအရောင် red/green/blue။ တစ်တန်းတည်းဆို && နဲ့ခြားပါ။ /welcomecancel နဲ့ရပ်ပါ။",
+            }
+            await message.reply_text(prompts[action])
+        elif action == "preview":
+            await welcome.send(message, welcome.load(self.store), user, context.bot)
+        elif action == "help":
+            await message.reply_text(welcome.HELP)
+        elif action == "cancel":
+            context.user_data.pop("welcome_edit", None)
+            await message.reply_text("Welcome ပြင်ဆင်ခြင်း ရပ်ပြီးပါပြီ။")
+        elif action in {"clearphoto", "clearbuttons"}:
+            value = welcome.load(self.store)
+            value["photo" if action == "clearphoto" else "buttons"] = None if action == "clearphoto" else []
+            await self.save_welcome(message, value, user, context)
+
+    async def save_welcome(self, message, value, user, context):
+        welcome.validate(value["text"])
+        try:
+            # Telegram validates markup and URLs before settings become public.
+            await welcome.send(message, value, user, context.bot)
+        except TelegramError:
+            raise RuleError("Preview ပို့မရလို့ မသိမ်းရသေးပါ။ ပုံ၊ HTML format၊ URL တွေကို စစ်ပြီး ပြန်ပို့ပါ။ /welcomehelp")
+        welcome.save(self.store, value)
+        context.user_data.pop("welcome_edit", None)
+        await message.reply_text("✅ အပေါ်က preview အတိုင်း သိမ်းပြီးပါပြီ။ User တွေ နောက် /start ပို့တဲ့အခါ ပြပေးပါမယ်။")
+
+    async def welcome_input(self, message, user, context):
+        mode = context.user_data["welcome_edit"]
+        value = welcome.load(self.store)
+        if mode == "photo":
+            if not message.photo:
+                raise RuleError("Photo အဖြစ်ပို့ပါ။ /welcomecancel နဲ့ရပ်နိုင်ပါတယ်။")
+            value["photo"] = message.photo[-1].file_id
+            if message.caption:
+                value["text"] = message.caption_html
+        elif mode in {"text", "html"}:
+            if not message.text:
+                raise RuleError("Welcome စာသားပို့ပါ။")
+            value["text"] = message.text_html if mode == "text" else message.text
+        elif mode == "buttons":
+            value["buttons"] = welcome.parse_buttons(message.text or "")
+        await self.save_welcome(message, value, user, context)
+
+    async def draft(self, message, context):
+        draft = context.user_data["draft"]
+        step = draft["step"]
+        if step == "confirm":
+            draft["duration_seconds"] = duration_seconds((message.text or "").strip())
+            draft["nonce"] = secrets.token_hex(8)
+            await self.preview(message, draft)
+            return
+        text = (message.text or "").strip()
+        if step == "photo":
+            if not message.photo:
+                raise RuleError("Photo အဖြစ်ပို့ပါ (document မဟုတ်ပါ)။")
+            draft[step] = message.photo[-1].file_id
+        elif step in ("name", "anime", "rarity"):
+            maximum = 24 if step == "rarity" else 60
+            if not text or len(text) > maximum or any(ord(c) < 32 for c in text):
+                raise RuleError(f"တစ်ကြောင်းတည်း စာလုံး 1–{maximum} ရေးပါ။")
+            draft[step] = text
+        elif step == "start":
+            draft[step] = cents(text)
+        elif step == "duration_seconds":
+            draft[step] = duration_seconds(text)
+        index = STEPS.index(step) + 1
+        if index < len(STEPS):
+            draft["step"] = STEPS[index]
+            await message.reply_text(PROMPTS[draft["step"]])
+        else:
+            await self.preview(message, draft)
+
+    async def preview(self, message, draft):
+        draft["step"] = "confirm"
+        row = dict(draft, id="DRAFT", increment=int(self.store.get("increment")), wallet_required=int(self.store.get("wallet_mode")))
+        await message.reply_photo(draft["photo"], caption=caption(row), parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [button("✅ Publish", f'publish:{draft["nonce"]}', "success"),
+                 button("❌ Cancel", f'discard:{draft["nonce"]}', "danger")]]))
+
+    async def callback(self, update, context):
+        query = update.callback_query
+        if (query.data or "").startswith("user:"):
+            if not update.effective_chat or update.effective_chat.type != "private" or not update.effective_user or update.effective_user.is_bot:
+                await query.answer("Bot private chat မှာ /menu ကိုသုံးပါ။", show_alert=True)
+                return
+            try:
+                action = query.data[5:]
+                if action.startswith("inlinehelp:"):
+                    page=int(action.split(":",1)[1])
+                    me=await context.bot.get_me()
+                    if not me.supports_inline_queries:
+                        hint = "@BotFather → /setinline → ဒီ bot ကိုရွေးပြီး Inline mode ဖွင့်ပါ။" if self.owner(update) else "Inline search သုံးရန် owner က Inline mode ဖွင့်ပေးဖို့ လိုပါသေးတယ်။"
+                        await query.answer(hint,show_alert=True)
+                        return
+                    await self.user_command("auctions",[str(page+1)],query.message,update.effective_user,edit=True)
+                    await query.answer("Inline search ခလုတ်ကို ထပ်နှိပ်ပါ။")
+                    return
+                content_page = 0
+                if action.startswith("page:"):
+                    _, action, argument, page = action.split(":")
+                    content_page = int(page)
+                    if not 0 <= content_page <= 1000000:
+                        raise RuleError("Page နံပါတ် မမှန်ပါ။")
+                    if action not in {"menu", "history", "wins", "auctions", "balance", "bal", "transactions", "close"}:
+                        raise RuleError("Menu action မမှန်ပါ။")
+                    if action != "auctions" and argument != "0":
+                        raise RuleError("Page နံပါတ် မမှန်ပါ။")
+                    args = [argument] if action == "auctions" else []
+                elif action.startswith("auctions:"):
+                    page = int(action.split(":",1)[1])
+                    action, args = "auctions", [str(page+1)]
+                else:
+                    args = []
+                await self.user_command(action, args, query.message, update.effective_user,
+                                        edit=True, content_page=content_page)
+                await query.answer()
+            except (RuleError, ValueError) as exc:
+                await query.answer(str(exc) if isinstance(exc, RuleError) else "Page မမှန်ပါ။ /menu ကိုပြန်ဖွင့်ပါ။", show_alert=True)
+            except BadRequest as exc:
+                if "message is not modified" in str(exc).lower():
+                    await query.answer()
+                else:
+                    await query.answer("ဒီ menu ကိုပြင်မရပါ။ /menu နဲ့ ပြန်ဖွင့်ပါ။", show_alert=True)
+            except TelegramError:
+                await query.answer("ခဏစောင့်ပြီး ပြန်နှိပ်ပါ။", show_alert=True)
+            return
+        if not self.owner(update):
+            # Callback answers are private to the clicker; no group message is sent.
+            await query.answer("Owner only", show_alert=True)
+            return
+        await query.answer()
+        try:
+            kind, value = (query.data or "").split(":", 1)
+            if kind == "welcome":
+                await self.welcome_action(value, query.message, update.effective_user, context)
+                return
+            if kind == "action":
+                if value in {"new", "auctions", "pause", "resume", "banned", "stats", "rules", "settings", "check", "welcome"}:
+                    await self.owner_command(value, [], query.message, context)
+                elif value in OWNER_ACTIONS:
+                    await query.message.reply_text(OWNER_ACTIONS[value])
+                return
+            draft = context.user_data.get("draft")
+            if kind in ("duration", "editduration"):
+                raise RuleError("အချိန်ခလုတ်ကို မသုံးတော့ပါ။ 1sec, 5min, 1hours, 1day လို့ စာပို့ပါ။")
+            if not draft or draft["nonce"] != value or draft["step"] != "confirm":
+                raise RuleError("ဒီ preview သက်တမ်းကုန်ပါပြီ။ /new နဲ့ ပြန်စပါ။")
+            if kind == "discard":
+                context.user_data.pop("draft", None)
+                await query.message.reply_text("Draft ဖျက်ပြီးပါပြီ။")
+                return
+            if kind != "publish":
+                return
+            await self.linked(context.bot)
+            auction_id = self.store.create(draft)
+            context.user_data.pop("draft", None)
+            row = self.store.auction(auction_id)
+            try:
+                post = await context.bot.send_photo(row["channel_id"], row["photo"], caption=caption(row), parse_mode="HTML")
+            except TelegramError:
+                await query.message.reply_text(f"⚠️ #{auction_id} publication မသေချာပါ။ ထပ်မတင်သေးပါနှင့်။ Channel စစ်ပါ။ Auto-forward ရရင် bot ကပြန်ချိတ်ပါမယ်။ Post မရှိတာသေချာမှ /cancelauction {auction_id} နဲ့ပိတ်ပြီး အသစ်တင်ပါ။")
+                return
+            self.store.published(auction_id, post.message_id, int(post.date.timestamp()))
+            self.store.rendered(auction_id, row["version"])
+            await query.message.reply_text(f"✅ Auction #{auction_id} တင်ပြီးပါပြီ။\n" + self.store.get("rules"))
+        except (RuleError, ValueError) as exc:
+            await query.message.reply_text(str(exc) if isinstance(exc, RuleError) else "လုပ်ဆောင်ချက် မမှန်ပါ။ /panel ကိုပြန်ဖွင့်ပါ။")
+        except TelegramError:
+            log.warning("Owner Telegram request failed")
+            await query.message.reply_text("Telegram request မအောင်မြင်ပါ။ /check နှင့် /auctions ကိုစစ်ပါ။")
+
+    def note_bid(self, auction_id):
+        now = time.monotonic()
+        previous = self.last_bid_at.get(auction_id)
+        self.last_bid_at[auction_id] = now
+        # Leading edit for isolated bids; every bid in a burst moves its trailing edit.
+        recent_bid = previous is not None and now - previous < 2
+        recent_edit = now - self.last_caption_at.get(auction_id, float("-inf")) < 2
+        self.bid_edit_due[auction_id] = now + 2 if recent_bid or recent_edit else now
+
+    async def announce_winners(self, context):
+        for row in self.store.pending_winners():
+            if time.monotonic() < self.winner_retry_after.get(row["id"], 0):
+                continue
+            # Never fall back to a different group or its general chat.
+            if str(row["group_id"]) != self.store.get("group_id"):
+                continue
+            url = account.post_link(row)
+            if not url:
+                continue
+            mention = f'<a href="tg://user?id={row["winner_id"]}">{html.escape(row["winner_name"] or "Winner")}</a>'
+            text = (
+                f'🏆 AUCTION WON!\n\n🎨 {mention}\n'
+                f'🎴 Character: {html.escape(row["name"])}\n'
+                f'💎 Rarity: {html.escape(row["rarity"])}\n'
+                f'💰 Winning Bid: {money(row["highest"])}\n\n'
+                'You won this auction.\n\n⏰ Payment Deadline: 5 Min'
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=row["group_id"], message_thread_id=row["root_id"],
+                    reply_to_message_id=row["root_id"], allow_sending_without_reply=False,
+                    text=text, parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("View Win Card", url=url)
+                    ]]),
+                )
+            except RetryAfter as exc:
+                delay = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else exc.retry_after
+                self.global_edit_after = time.monotonic() + delay + 1
+                return
+            except TelegramError:
+                self.winner_retry_after[row["id"]] = time.monotonic() + 30
+                log.warning("Winner announcement failed for auction %s; retry in 30s", row["id"])
+                continue
+            self.store.winner_notified(row["id"])
+            self.winner_retry_after.pop(row["id"], None)
+
+    async def tick(self, context):
+        async with self.tick_lock:
+            self.store.close_due()
+            if time.monotonic() < self.global_edit_after:
+                return
+            for row in self.store.dirty():
+                if time.monotonic() < self.edit_after.get(row["id"], 0):
+                    continue
+                if row["status"] == "active" and time.monotonic() < self.bid_edit_due.get(row["id"], 0):
+                    continue
+                try:
+                    await context.bot.edit_message_caption(chat_id=row["channel_id"], message_id=row["post_id"], caption=caption(row), parse_mode="HTML")
+                except RetryAfter as exc:
+                    delay = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else exc.retry_after
+                    self.global_edit_after = time.monotonic() + delay + 1
+                    return
+                except BadRequest as exc:
+                    if "message is not modified" in str(exc).lower():
+                        self.store.rendered(row["id"], row["version"])
+                        self.last_caption_at[row["id"]] = time.monotonic()
+                    else:
+                        self.edit_after[row["id"]] = time.monotonic() + 60
+                        log.warning("Caption edit rejected for auction %s; retry in 60s", row["id"])
+                    continue
+                except TelegramError:
+                    self.edit_after[row["id"]] = time.monotonic() + 15
+                    log.warning("Caption update failed for auction %s; retry in 15s", row["id"])
+                    continue
+                self.store.rendered(row["id"], row["version"])
+                self.edit_after.pop(row["id"], None)
+                self.last_caption_at[row["id"]] = time.monotonic()
+
+            await self.announce_winners(context)
+
+    async def error(self, update, context):
+        # Avoid logging Telegram URLs/tokens, message bodies, or bidder identities.
+        log.error("Unhandled bot error: %s", type(context.error).__name__)
+
+    async def configure_menu(self, application):
+        scopes = [
+            (BotCommandScopeDefault(), USER_COMMANDS + GROUP_COMMANDS),
+            (BotCommandScopeAllPrivateChats(), USER_COMMANDS),
+            (BotCommandScopeAllGroupChats(), GROUP_COMMANDS),
+            (BotCommandScopeAllChatAdministrators(), GROUP_COMMANDS),
+        ]
+        # Replace owner chat overrides too; privileged commands stay in /panel only.
+        scopes.extend((BotCommandScopeChat(owner_id), USER_COMMANDS) for owner_id in sorted(self.config.owners))
+        try:
+            for scope, commands in scopes:
+                for language in ("", "my", "en"):
+                    await application.bot.set_my_commands(commands, scope=scope, language_code=language)
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        except TelegramError as exc:
+            delay = 60
+            if isinstance(exc, RetryAfter):
+                retry = exc.retry_after
+                delay = max(delay, retry.total_seconds() if hasattr(retry, "total_seconds") else retry) + 1
+            application.job_queue.run_once(self.retry_menu, when=delay)
+            log.warning("Command menu setup failed; retry scheduled (%s)", type(exc).__name__)
+
+    async def retry_menu(self, context):
+        await self.configure_menu(context.application)
+
+    async def shutdown(self, application):
+        self.store.close()
+
+    def application(self):
+        app = Application.builder().token(self.config.token).concurrent_updates(False).post_init(self.configure_menu).post_shutdown(self.shutdown).build()
+        app.add_handler(MessageHandler(filters.ALL, self.message))
+        app.add_handler(CallbackQueryHandler(self.callback))
+        app.add_handler(InlineQueryHandler(self.inline_search))
+        app.add_error_handler(self.error)
+        app.job_queue.run_repeating(self.tick, interval=0.25, first=1, job_kwargs={"max_instances": 1, "coalesce": True})
+        return app
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+    try:
+        config = Config.from_env()
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    try:
+        service = AuctionBot(config)
+    except (PyMongoError, ValueError):
+        raise SystemExit("MongoDB startup failed. Check MONGODB_URI, database access and replica-set support.") from None
+    service.application().run_polling(allowed_updates=POLLING_UPDATES, drop_pending_updates=False)
