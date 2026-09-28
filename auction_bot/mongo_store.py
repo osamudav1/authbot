@@ -56,6 +56,26 @@ class MongoStore:
     def _wallet_filter(self, user_id):
         return {self.wallet_id_field: user_id}
 
+    def _wallet_row(self, user_id, session=None):
+        # Read-only compatibility lookup; writes always use the matched _id.
+        fields = (self.wallet_id_field, "_id", "telegram_id", "user_id", "id")
+        values = (user_id, str(user_id))
+        seen = set()
+        for field in fields:
+            for value in values:
+                key = (field, value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                row = self.wallet_collection.find_one({field: value}, session=session)
+                if row:
+                    return row
+        return None
+
+    @staticmethod
+    def _wallet_doc_filter(row):
+        return {"_id": row["_id"]}
+
     def _wallet_value(self, row):
         raw = row.get(self.wallet_balance_field, 0) if row else 0
         try:
@@ -190,7 +210,7 @@ class MongoStore:
     def wallet_balance(self, user_id, session=None):
         if session is None:
             return self._tx(lambda s:self.wallet_balance(user_id,s))
-        row=self.wallet_collection.find_one(self._wallet_filter(user_id),session=session)
+        row=self._wallet_row(user_id, session=session)
         if row is None:
             raise RuleError("ဒီ user ရဲ့ org wallet မတွေ့ပါ။ ပထမဆုံး org wallet ထဲ user record ဖန်တီးပါ။")
         total=self._wallet_value(row)
@@ -240,8 +260,11 @@ class MongoStore:
             hold=self.db.holds.find_one({"_id":aid},session=s)
             if not hold or hold["user_id"]!=row["winner_id"] or hold["amount"]!=row["highest"]:
                 raise RuleError("Wallet hold မကိုက်ညီပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
+            wallet=self._wallet_row(hold["user_id"], session=s)
+            if wallet is None:
+                raise RuleError("Winner ရဲ့ org wallet မတွေ့ပါ။ ငွေမဖြတ်ဘဲ ရပ်ထားပါတယ်။")
             result=self.wallet_collection.update_one(
-                {**self._wallet_filter(hold["user_id"]),
+                {**self._wallet_doc_filter(wallet),
                  self.wallet_balance_field: {"$gte": self._wallet_amount(hold["amount"])}},
                 {"$inc": {self.wallet_balance_field: -self._wallet_amount(hold["amount"])}},
                 session=s)
@@ -312,8 +335,11 @@ class MongoStore:
             balance=self.wallet_balance(user_id,s)
             if balance["available"]+delta<0:raise RuleError("ထိန်းထားတဲ့ bid ငွေကို နုတ်လို့မရပါ။ Available balance မလုံလောက်ပါ။")
             if balance["total"]+delta>99999999999:raise RuleError("Wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            wallet=self._wallet_row(user_id, session=s)
+            if wallet is None:
+                raise RuleError("Org wallet မတွေ့ပါ။ User document အသစ်မဖန်တီးဘဲ ရပ်ထားပါတယ်.")
             result=self.wallet_collection.update_one(
-                self._wallet_filter(user_id),
+                self._wallet_doc_filter(wallet),
                 {"$inc": {self.wallet_balance_field: self._wallet_amount(delta)}},
                 upsert=False, session=s)
             if result.modified_count != 1:
