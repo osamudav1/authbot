@@ -168,7 +168,8 @@ def pvp_name(user_id, name):
 
 def usd_equivalent(coin_subunits):
     usd_subunits = coin_subunits // USD_TO_COIN_RATE
-    return f"${usd_subunits // 100:,}.{usd_subunits % 100:02d}"
+    whole, cents = divmod(usd_subunits, 100)
+    return f"${whole}" if cents == 0 else f"${whole}.{cents:02d}"
 
 
 def pvp_animation_text(game):
