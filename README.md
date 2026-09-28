@@ -141,7 +141,7 @@ Ban လုပ်ခြင်းသည် ယခင် bids များကို
 
 ## PvP coin game
 
-Owner သည် bot private chat မှ `/setpvpgp -100…` ဖြင့် သီးခြား supergroup သတ်မှတ်ပါ။ Bot ကို အဲဒီ group ထဲထည့်ပါ။ PvP group command menu မှာ `/pvp`, `/bal`, `/bcoin` သုံးခုသာ ပေါ်မည်။ `/bal` သည် ကိုယ့်လက်ကျန်ကိုပြပြီး `/bcoin` ကို PvP game group ထဲမှာသာ coin gift ပို့ရန်သုံးပါ။
+Owner သည် bot private chat မှ `/setpvpgp -100…` ဖြင့် သီးခြား supergroup သတ်မှတ်ပါ။ Bot ကို အဲဒီ group ထဲထည့်ပါ။ Owner သည် game group မှ user message ကို reply လုပ်ပြီး `+$100` / `-$5` ပို့ကာ coin ထည့်/နုတ်နိုင်သည်။ Reply ကို bot လက်ခံရရန် bot ကို group admin ခန့်ပါ၊ သို့မဟုတ် @BotFather တွင် Group Privacy ကိုပိတ်ပါ။ PvP group command menu မှာ `/pvp`, `/bal`, `/bcoin` သုံးခုသာ ပေါ်မည်။ `/bal` သည် ကိုယ့်လက်ကျန်ကိုပြပြီး `/bcoin` ကို PvP game group ထဲမှာသာ coin gift ပို့ရန်သုံးပါ။
 
 ပြိုင်ဘက်၏ group message ကို reply လုပ်ပြီး `/pvp 500` သို့မဟုတ် 500 coin ထက်များသောပမာဏ ပို့ပါ။ Requester မှာ လောင်းကြေးပြည့်ရှိမှ request တင်နိုင်သည်။ ဖိတ်ခေါ်ခံရသူက **Confirm** လုပ်သည့်အချိန်တွင် နှစ်ဖက်စလုံး၏ လက်ကျန်နှင့် game slot ကိုပြန်စစ်ပြီး တစ်ယောက်စီ၏ wager ကိုဖယ်ထားသည်။ ဖိတ်ခေါ်ခံရသူက **Cancel** လုပ်နိုင်ပြီး requester ကလည်း pending request ကို cancel လုပ်နိုင်သည်။
 

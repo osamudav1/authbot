@@ -152,6 +152,51 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(usd_equivalent(cents("500")), "$100")
         self.assertEqual(usd_equivalent(cents("502.50")), "$100.50")
 
+    def test_owner_can_credit_and_debit_by_reply_in_the_pvp_group(self):
+        class FakeBot:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, **kwargs):
+                self.sent.append(kwargs)
+
+        class FakeMessage:
+            sender_chat = None
+
+            def __init__(self, text, message_id):
+                self.text = text
+                self.chat = SimpleNamespace(type="supergroup")
+                self.chat_id = -100123
+                self.message_id = message_id
+                self.reply_to_message = SimpleNamespace(
+                    sender_chat=None,
+                    from_user=SimpleNamespace(id=77, is_bot=False, full_name="Player"),
+                )
+                self.sent = []
+
+            async def reply_text(self, text):
+                self.sent.append(text)
+
+        bot = object.__new__(AuctionBot)
+        bot.store = self.store
+        bot.config = SimpleNamespace(owners={99})
+        bot.group_id = "-100999"
+        bot.pvp_group_id = "-100123"
+        user = SimpleNamespace(id=99, is_bot=False)
+        chat = SimpleNamespace(id=-100123, type="supergroup")
+        fake_bot = FakeBot()
+        context = SimpleNamespace(bot=fake_bot, user_data={})
+
+        for message_id, text in enumerate(("+100", "-$20", "/auth +$20"), start=1):
+            message = FakeMessage(text, message_id)
+            update = SimpleNamespace(message=message, effective_chat=chat, effective_user=user)
+            asyncio.run(bot.message(update, context))
+
+        self.assertEqual(self.store.wallet_balance(77)["available"], cents("500"))
+        self.assertEqual(len(fake_bot.sent), 2)
+        self.assertIn("USD $100", fake_bot.sent[0]["text"])
+        self.assertIn("500coin", fake_bot.sent[0]["text"])
+
     def test_pvp_coin_gift_is_atomic_idempotent_and_group_limited(self):
         self.credit(1, cents("1000"))
         self.assertTrue(self.store.transfer_coins(-100123, 1, 2, cents("250"), "gift:group:message"))

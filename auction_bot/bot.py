@@ -414,11 +414,12 @@ class AuctionBot:
             return
         try:
             if command == "auth":
-                if update.effective_user and update.effective_user.id in self.config.owners and (self.owner(update) or self.group(update)):
+                if (update.effective_user and update.effective_user.id in self.config.owners
+                        and (self.owner(update) or self.group(update) or self.pvp_group(update))):
                     await self.auth_command(args, message, update.effective_user.id, context.bot)
                 return
             if (is_owner and not command and message.reply_to_message
-                    and (self.owner(update) or self.group(update))
+                    and (self.owner(update) or self.group(update) or self.pvp_group(update))
                     and not context.user_data.get("draft")
                     and not context.user_data.get("welcome_edit")):
                 signed_args = signed_owner_message_args(text)
