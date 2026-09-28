@@ -4,7 +4,7 @@ import re
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
-from .store import RuleError, money
+from .store import MIN_PVP_WAGER, RuleError, money
 
 
 class MongoStore:
@@ -28,6 +28,8 @@ class MongoStore:
         self.db.wallet_events.create_index("event_key", unique=True)
         self.db.wallet_events.create_index([("user_id", 1), ("id", -1)])
         self.db.messages.create_index([("chat_id", 1), ("message_id", 1)], unique=True)
+        self.db.pvp_games.create_index([("group_id", 1), ("status", 1), ("next_at", 1)])
+        self.db.pvp_games.create_index([("status", 1), ("requester_id", 1), ("target_id", 1)])
         self.db.coord.update_one({"_id":"ledger"}, {"$setOnInsert":{"version":0}}, upsert=True)
         for key, value in (("wallet_mode","1"),("increment","5000"),("paused","0"),
                            ("rules","Bid ငွေကို ယာယီထိန်းထားပြီး winner ကို လေလံပိတ်ချိန် ငွေဖြတ်ပါမယ်။")):
@@ -65,11 +67,23 @@ class MongoStore:
 
     def target(self, key, value):
         def change(s):
+            if key=="group_id" and str(value)==self.get("pvp_group_id",session=s):
+                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
             if self.get(key,session=s)==str(value): return
             if self.db.auctions.find_one({"status":{"$in":["active","publishing"]}},session=s):
                 raise RuleError("Channel/group ပြောင်းမယ်ဆို active/publishing လေလံတွေကို အရင်ပိတ်ပါ။")
             self.db.settings.update_one({"_id":key},{"$set":{"value":str(value)}},upsert=True,session=s)
         self._tx(change)
+
+    def set_pvp_group(self, group_id):
+        def configure(s):
+            if str(group_id)==str(self.get("group_id",session=s)):
+                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
+            if str(group_id) != str(self.get("pvp_group_id", session=s)) and self.db.pvp_games.find_one(
+                    {"status":{"$in":["pending","running"]}}, session=s):
+                raise RuleError("PvP group ပြောင်းရန် pending/running ပွဲများကို အရင်ရှင်းပါ။")
+            self.db.settings.update_one({"_id":"pvp_group_id"},{"$set":{"value":str(group_id)}},upsert=True,session=s)
+        self._tx(configure)
 
     def auction(self, auction_id, session=None):
         row=self.db.auctions.find_one({"_id":auction_id},session=session)
@@ -283,6 +297,102 @@ class MongoStore:
         return self._tx(adjust)
 
     def wallet_history(self,user_id):return [self._clean(r) for r in self.db.wallet_events.find({"user_id":user_id}).sort("id",-1).limit(10)]
+
+    def _pvp_game(self, game_id, session=None):
+        row=self.db.pvp_games.find_one({"_id":game_id},session=session)
+        if not row:raise RuleError("PvP request မတွေ့ပါ။")
+        return self._clean(row)
+
+    def create_pvp(self,game_id,group_id,requester_id,requester_name,target_id,target_name,amount,now=None):
+        if type(amount) is not int or not MIN_PVP_WAGER<=amount<=99999999999:raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 500 coin ဖြစ်ရပါမယ်။")
+        if requester_id==target_id:raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
+        def create(s):
+            at=time.time() if now is None else now
+            if str(group_id)!=str(self.get("pvp_group_id",session=s)):
+                raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self.db.pvp_games.count_documents({"group_id":group_id,"status":"running"},session=s)>=5:
+                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ပွဲအသစ်တောင်းနိုင်ပါတယ်။")
+            for uid in (requester_id,target_id):
+                if self.db.pvp_games.find_one({"group_id":group_id,"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]},session=s):
+                    raise RuleError("This User Playing")
+            if self.db.pvp_games.find_one({"status":"pending","requester_id":requester_id},session=s):
+                raise RuleError("သင့်မှာ အဖြေမရသေးတဲ့ PvP request ရှိပါတယ်။")
+            balance=self.wallet_balance(requester_id,s)
+            if balance["available"]<amount:raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,requester_id=requester_id,
+                requester_name=requester_name[:64],target_id=target_id,target_name=target_name[:64],amount=amount,
+                status="pending",message_id=0,created=at,next_at=None,step=0,final_percent=None,winner_id=None,
+                slot_notified=0),session=s)
+            return self._pvp_game(game_id,s)
+        return self._tx(create)
+
+    def set_pvp_message(self,game_id,message_id):
+        self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"message_id":message_id}})
+
+    def cancel_pvp(self,game_id,actor_id):
+        def cancel(s):
+            row=self._pvp_game(game_id,s)
+            if actor_id not in (row["requester_id"],row["target_id"]):raise RuleError("ဒီ PvP request ကို cancel လုပ်ခွင့်မရှိပါ။")
+            if row["status"]!="pending":raise RuleError("ဒီ PvP request ကို ယခု cancel မလုပ်နိုင်ပါ။")
+            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"cancelled"}},session=s)
+            return self._pvp_game(game_id,s)
+        return self._tx(cancel)
+
+    def accept_pvp(self,game_id,actor_id,final_percent,now=None):
+        if type(final_percent) is not int or not 1<=final_percent<=100:raise RuleError("PvP result မမှန်ပါ။")
+        def accept(s):
+            at=time.time() if now is None else now
+            row=self._pvp_game(game_id,s)
+            if actor_id!=row["target_id"]:raise RuleError("Request လက်ခံနိုင်သူက ဖိတ်ခေါ်ခံရသူတစ်ဦးတည်းပါ။")
+            if row["status"]!="pending":raise RuleError("ဒီ PvP request ကို အရင်ဖြေပြီးပါပြီ။")
+            if str(row["group_id"])!=str(self.get("pvp_group_id",session=s)):raise RuleError("ဒီ group မှာ PvP မကစားနိုင်တော့ပါ။")
+            if self.db.pvp_games.count_documents({"group_id":row["group_id"],"status":"running"},session=s)>=5:
+                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
+            for uid in (row["requester_id"],row["target_id"]):
+                if self.db.pvp_games.find_one({"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]},session=s):
+                    raise RuleError("This User Playing")
+                balance=self.wallet_balance(uid,s)
+                if balance["available"]<row["amount"]:raise RuleError(f"User {uid} မှာ လိုအပ်တဲ့ coin မလုံလောက်ပါ။")
+                if balance["total"]+row["amount"]>99999999999:raise RuleError("လောင်းကြေးအနိုင်ရလျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            for uid in (row["requester_id"],row["target_id"]):
+                self.db.wallets.update_one({"_id":uid,"balance":{"$gte":row["amount"]}},{"$inc":{"balance":-row["amount"]}},session=s)
+                eid=self._next("wallet_events",s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="pvp_stake",
+                    note=f"PvP stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"pvp:{game_id}:stake:{uid}",created=at),session=s)
+            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+1,"step":0,"final_percent":final_percent}},session=s)
+            return self._pvp_game(game_id,s)
+        return self._tx(accept)
+
+    def due_pvp(self,now=None):
+        at=time.time() if now is None else now
+        return [self._clean(r) for r in self.db.pvp_games.find({"status":"running","next_at":{"$lte":at}}).sort([("next_at",1),("created",1)])]
+
+    def advance_pvp(self,game_id,now=None):
+        def advance(s):
+            at=time.time() if now is None else now
+            row=self._pvp_game(game_id,s)
+            if row["status"]!="running" or row["next_at"] is None or row["next_at"]>at:return row
+            step=row["step"]+1
+            if step<5:
+                self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"step":step,"next_at":at+1}},session=s)
+                return self._pvp_game(game_id,s)
+            winner=row["requester_id"] if row["final_percent"]>50 else row["target_id"]
+            prize=row["amount"]*2
+            wallet=self.db.wallets.find_one({"_id":winner},session=s)
+            if not wallet:raise RuleError("Winner wallet မတွေ့ပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
+            self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":prize}},session=s)
+            eid=self._next("wallet_events",s)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=prize,kind="pvp_win",
+                note=f"PvP prize · {game_id}",actor_id=None,auction_id=None,event_key=f"pvp:{game_id}:prize",created=at),session=s)
+            self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None}},session=s)
+            return self._pvp_game(game_id,s)
+        return self._tx(advance)
+
+    def pending_pvp_slot_notifications(self):
+        return [self._clean(r) for r in self.db.pvp_games.find({"status":"finished","slot_notified":0}).sort([("created",1),("_id",1)])]
+
+    def mark_pvp_slot_notified(self,game_id):
+        self.db.pvp_games.update_one({"_id":game_id,"status":"finished"},{"$set":{"slot_notified":1}})
 
     def stats(self):
         counts=[(r["_id"],r["count"]) for r in self.db.auctions.aggregate([{"$group":{"_id":"$status","count":{"$sum":1}}}])]
