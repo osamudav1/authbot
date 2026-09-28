@@ -7,12 +7,10 @@ from dotenv import load_dotenv
 class Config:
     token: str
     owners: frozenset
-    database: str
     channel_id: str = ""
     group_id: str = ""
     mongodb_uri: str = ""
     mongodb_database: str = "authbid_bot"
-    require_wallet: bool = False
 
     @classmethod
     def from_env(cls):
@@ -33,6 +31,11 @@ class Config:
         database = os.getenv("MONGODB_DATABASE", "authbid_bot").strip()
         if not database or any(c in database for c in '/\\. "$*<>:|?') or len(database.encode())>63:
             raise ValueError("MONGODB_DATABASE is invalid")
-        return cls(token, frozenset(int(owner) for owner in owners),
-                   os.getenv("DATABASE_PATH", "data/auctions.sqlite3"),
-                   os.getenv("CHANNEL_ID", "").strip(), os.getenv("GROUP_ID", "").strip(), uri, database, True)
+        return cls(
+            token=token,
+            owners=frozenset(int(owner) for owner in owners),
+            channel_id=os.getenv("CHANNEL_ID", "").strip(),
+            group_id=os.getenv("GROUP_ID", "").strip(),
+            mongodb_uri=uri,
+            mongodb_database=database,
+        )

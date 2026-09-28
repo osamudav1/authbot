@@ -4,7 +4,7 @@ import re
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
-from .store import MIN_PVP_WAGER, RuleError, money
+from .domain import MIN_PVP_WAGER, RuleError, money
 
 
 class MongoStore:

@@ -1,12 +1,14 @@
 import unittest
 import tempfile
 import asyncio
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 from auction_bot.store import RuleError, Store, cents, money, usd_to_coins
 from auction_bot.bot import (AuctionBot, auth_adjustment, pvp_animation_text,
-                             signed_owner_message_args, usd_equivalent)
+                             signed_owner_message_args, usd_equivalent,
+                             UPDATE_CONCURRENCY, WORKER_TICK_INTERVAL_SECONDS)
 
 
 class PvPStoreTests(unittest.TestCase):
@@ -76,6 +78,36 @@ class PvPStoreTests(unittest.TestCase):
     def test_coin_amount_display(self):
         self.assertEqual(cents("10000"), 1_000_000)
         self.assertEqual(money(1_000_000), "10,000.00 coin")
+
+    def test_responsiveness_settings_and_local_sqlite_thread_safety(self):
+        self.assertEqual(UPDATE_CONCURRENCY, 16)
+        self.assertEqual(WORKER_TICK_INTERVAL_SECONDS, 0.5)
+        bot = object.__new__(AuctionBot)
+        bot.store = self.store
+        current_thread = threading.get_ident()
+        self.assertEqual(asyncio.run(bot.store_call(threading.get_ident)), current_thread)
+
+    def test_bot_requires_mongodb_and_has_no_sqlite_fallback(self):
+        with self.assertRaisesRegex(ValueError, "MONGODB_URI is required"):
+            AuctionBot(SimpleNamespace(mongodb_uri="", mongodb_database="authbid_bot"))
+
+    def test_unrelated_group_chat_uses_cached_routing_and_skips_database_work(self):
+        class NoDatabaseAccess:
+            def __getattr__(self, name):
+                raise AssertionError(f"unexpected database access: {name}")
+
+        bot = object.__new__(AuctionBot)
+        bot.store = NoDatabaseAccess()
+        bot.config = SimpleNamespace(owners=set())
+        bot.group_id = "-100123"
+        bot.pvp_group_id = "-100456"
+        message = SimpleNamespace(sender_chat=None, text="ordinary group message", chat_id=-100123)
+        update = SimpleNamespace(
+            message=message,
+            effective_chat=SimpleNamespace(id=-100123, type="supergroup"),
+            effective_user=SimpleNamespace(id=7, is_bot=False),
+        )
+        asyncio.run(bot.message(update, SimpleNamespace()))
 
     def test_pvp_group_must_remain_separate_from_auction_group(self):
         with self.assertRaisesRegex(RuleError, "သီးခြားထားပါ"):
