@@ -78,6 +78,7 @@ AUCTION_GROUP_COMMANDS = [
 ]
 PVP_GROUP_COMMANDS = [
     BotCommand("pvp", "ပြိုင်ဘက်ကို coin wager PvP စိန်ခေါ်ရန် (သူ့ message ကို reply လုပ်ပါ)"),
+    BotCommand("author", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
 ]
@@ -467,7 +468,9 @@ class AuctionBot:
                     await self.user_command(command, args, message, update.effective_user)
                 return
             if self.pvp_group(update):
-                if command == "pvp":
+                if command == "author":
+                    await self.auther_command(message, context)
+                elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
                 elif command == "bal":
                     if args:
@@ -479,7 +482,7 @@ class AuctionBot:
                 elif command == "bcoin":
                     await self.pvp_gift_command(args, message, update.effective_user)
                 return
-            if command == "auther" and self.group(update):
+            if command in {"author", "auther"} and (self.group(update) or self.pvp_group(update)):
                 await self.auther_command(message, context)
                 return
             if command == "bal":
