@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import hashlib
 import html
 import io
 import logging
@@ -174,10 +175,20 @@ def usd_equivalent(coin_subunits):
 
 def pvp_animation_text(game):
     first = game["final_percent"]
-    shown = 50 if game["status"] == "pending" else 50 + round((first - 50) * game["step"] / 5)
+    if game["status"] in {"pending", "finished"}:
+        shown = 50 if game["status"] == "pending" else first
+    else:
+        step = game["step"]
+        progress = step / 5
+        base = 50 + (first - 50) * progress
+        # Keep the suspense repeatable after restarts while allowing the odds to
+        # move slightly up and down instead of revealing a straight line.
+        digest = hashlib.sha256(f'{game["id"]}:{step}'.encode()).digest()
+        jitter = (digest[0] % 25) - 12
+        shown = round(max(1, min(99, base + jitter * (1 - progress))))
     second = 100 - shown
-    filled = max(1, min(19, round(shown / 5)))
-    bar = "🟦" * filled + "🟥" * (20 - filled)
+    filled = max(1, min(12, math.ceil(shown / 100 * 12)))
+    bar = "🟦" * filled + "🟥" * (12 - filled)
     text = (f'⚔️ <b>PvP · {money(game["amount"])} each</b>\n\n'
             f'{pvp_name(game["requester_id"], game["requester_name"])} — <b>{shown}%</b>\n'
             f'{bar}\n'
