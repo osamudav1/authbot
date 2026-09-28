@@ -435,7 +435,7 @@ class MongoStore:
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="boom_stake",note=f"Boom stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"boom:{game_id}:stake:{uid}",created=at),session=s)
             size=random.choice((6,9)); positions=random.sample(range(1,size+1),2)
             owners={str(positions[0]):row["requester_id"],str(positions[1]):row["target_id"]}
-                self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","board_size":size,"boom_positions":positions,"boom_owners":owners,"revealed":[],"turn_id":row["requester_id"],"turn_at":at}},session=s)
+            self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","board_size":size,"boom_positions":positions,"boom_owners":owners,"revealed":[],"turn_id":row["requester_id"],"turn_at":at}},session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(accept)
 
