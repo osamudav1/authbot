@@ -361,7 +361,7 @@ Test URI သည် disposable replica set သာဖြစ်ရမည်။ Prod
 
 Inline မှပို့သောကဒ် caption သည် `🌸 Name`, `📺 Anime`, `💎 ⚜️ Rarity`, `🆔 Auction ID`, `🎴Start Bid - amount coin` သာပါသည်။ မူရင်း post Comments link ခလုတ်ကို ဆက်ထားသည်။
 
-Default minimum increment is 50.00 coin. The first bid may equal the starting price; subsequent bids must be at least 50 coin above the current bid (larger increases are accepted). Owner /increment applies to future auctions.
+Default minimum increment is 50coin. The first bid may equal the starting price; subsequent bids must be at least 50coin above the current bid (larger increases are accepted). Owner /increment applies to future auctions.
 
 Winner notices are sent to the original card's discussion thread, with a linked display name and a View Win Card button. Successful sends are recorded persistently; failed sends retry with backoff. Historical closed auctions are not announced on upgrade. Telegram cannot guarantee exactly-once delivery if a send succeeds but its response or the following database write is lost. The "Payment Deadline: 5 Min" line is display text; wallet settlement still happens at auction close and no additional payment timer is started.
 

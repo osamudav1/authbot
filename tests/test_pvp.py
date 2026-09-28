@@ -77,7 +77,10 @@ class PvPStoreTests(unittest.TestCase):
 
     def test_coin_amount_display(self):
         self.assertEqual(cents("10000"), 1_000_000)
-        self.assertEqual(money(1_000_000), "10,000.00 coin")
+        self.assertEqual(money(1_500_000), "15000coin")
+        self.assertEqual(money(250_000), "2500coin")
+        self.assertEqual(money(250_050), "2500.5coin")
+        self.assertEqual(money(250_005), "2500.05coin")
 
     def test_responsiveness_settings_and_local_sqlite_thread_safety(self):
         self.assertEqual(UPDATE_CONCURRENCY, 16)
@@ -123,7 +126,7 @@ class PvPStoreTests(unittest.TestCase):
         self.assertIn("60%", text)
         self.assertIn("40%", text)
         self.assertIn("Winner:", text)
-        self.assertIn("Prize: 1,000.00 coin", text)
+        self.assertIn("Prize: 1000coin", text)
 
     def test_owner_can_credit_or_debit_by_reply_and_by_id(self):
         reply = SimpleNamespace(
@@ -146,7 +149,8 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(usd_to_coins("100.50"), cents("502.50"))
         self.assertEqual(signed_owner_message_args("+100"), ["+100"])
         self.assertEqual(signed_owner_message_args("-$5 correction"), ["-$5", "correction"])
-        self.assertEqual(usd_equivalent(cents("500")), "$100.00")
+        self.assertEqual(usd_equivalent(cents("500")), "$100")
+        self.assertEqual(usd_equivalent(cents("502.50")), "$100.50")
 
     def test_pvp_coin_gift_is_atomic_idempotent_and_group_limited(self):
         self.credit(1, cents("1000"))
@@ -184,7 +188,7 @@ class PvPStoreTests(unittest.TestCase):
                                          SimpleNamespace(id=7, is_bot=False)))
         self.assertEqual(self.store.wallet_balance(7)["available"], cents("100"))
         self.assertEqual(self.store.wallet_balance(8)["available"], cents("100"))
-        self.assertIn("100.00 coin", message.sent[0])
+        self.assertIn("100coin", message.sent[0])
         self.assertIn("Receiver", message.sent[0])
 
     def test_button_cooldown_is_two_seconds(self):
@@ -214,9 +218,9 @@ class PvPStoreTests(unittest.TestCase):
             fake, 77, cents("500"), cents("600")))
         self.assertTrue(delivered)
         self.assertEqual(fake.sent[0]["chat_id"], 77)
-        self.assertIn("USD $100.00", fake.sent[0]["text"])
-        self.assertIn("500.00 coin", fake.sent[0]["text"])
-        self.assertIn("600.00 coin", fake.sent[0]["text"])
+        self.assertIn("USD $100", fake.sent[0]["text"])
+        self.assertIn("500coin", fake.sent[0]["text"])
+        self.assertIn("600coin", fake.sent[0]["text"])
 
     def test_pvp_wager_below_500_coins_is_rejected(self):
         self.credit(1)

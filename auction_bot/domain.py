@@ -34,4 +34,6 @@ def usd_to_coins(value):
 
 
 def money(amount):
-    return f"{amount // 100:,}.{amount % 100:02d} coin"
+    whole, fraction = divmod(amount, 100)
+    decimals = f".{fraction:02d}".rstrip("0") if fraction else ""
+    return f"{whole}{decimals}coin"
