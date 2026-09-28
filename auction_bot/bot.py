@@ -369,7 +369,7 @@ class AuctionBot:
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
-            if command in {"balance", "bal"}:
+            if command == "bal":
                 if not update.effective_user or update.effective_user.is_bot:
                     return
                 if args:
