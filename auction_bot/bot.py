@@ -638,7 +638,8 @@ class AuctionBot:
 
     async def author_command(self, message):
         text, markup = await self.store_call(
-            account.active, self.store, 0, inline_enabled=True, button_label="🔎 Search Auth")
+            account.active, self.store, 0, inline_enabled=True,
+            button_label="🔎 Search Auth", include_back=False)
         await message.reply_text(text, parse_mode="HTML", reply_markup=markup,
                                  disable_web_page_preview=True)
 
