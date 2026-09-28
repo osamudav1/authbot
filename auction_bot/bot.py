@@ -188,9 +188,9 @@ def pvp_animation_text(game):
     filled = max(1, min(12, math.ceil(shown / 100 * 12)))
     bar = "🟦" * filled + "🟥" * (12 - filled)
     text = (f'⚔️ <b>PvP · {money(game["amount"])} each</b>\n\n'
-            f'{pvp_name(game["requester_id"], game["requester_name"])} — <b>{shown}%</b>\n'
-            f'{bar}\n'
-            f'{pvp_name(game["target_id"], game["target_name"])} — <b>{second}%</b>')
+            f'🟦 {pvp_name(game["requester_id"], game["requester_name"])} — <b>{shown}%</b>\n\n'
+            f'{bar}\n\n'
+            f'🟥 {pvp_name(game["target_id"], game["target_name"])} — <b>{second}%</b>')
     if game["status"] == "finished":
         winner = game["requester_id"] if game["winner_id"] == game["requester_id"] else game["target_id"]
         winner_name = game["requester_name"] if winner == game["requester_id"] else game["target_name"]
