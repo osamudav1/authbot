@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from telegram import (BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats,
-                      BotCommandScopeChat, MenuButtonCommands, InlineQueryResultCachedPhoto, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton,
+                      BotCommandScopeChat, MenuButtonCommands, InlineQueryResultCachedPhoto, InlineQueryResultCachedVideo, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton,
                       InlineKeyboardMarkup, MessageOriginChannel)
 from telegram.error import BadRequest, RetryAfter, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, MessageHandler, filters
@@ -84,7 +84,7 @@ PVP_GROUP_COMMANDS = [
 ]
 
 PROMPTS = {
-    "photo": "📷 Card photo ပို့ပါ။ /draftcancel နဲ့ ရပ်နိုင်ပါတယ်။",
+    "photo": "📷/🎥 Card photo သို့ video ပို့ပါ။ /draftcancel နဲ့ ရပ်နိုင်ပါတယ်။",
     "name": "Card name ရေးပါ (စာလုံး 60 အထိ)။",
     "anime": "Anime name ရေးပါ (စာလုံး 60 အထိ)။",
     "rarity": "Rarity ရေးပါ (ဥပမာ SSR, UR; စာလုံး 24 အထိ)။",
@@ -344,7 +344,8 @@ class AuctionBot:
                 match = re.match(r"🎴\s*WAIFU AUCTION #(\d+)\n", message.caption or "", re.IGNORECASE)
                 if match:
                     candidate = await self.store_call(self.store.recoverable, int(match[1]), origin.chat.id, message.chat_id)
-                    if candidate and message.photo and candidate["photo"] == message.photo[-1].file_id:
+                    media_id = message.photo[-1].file_id if message.photo else message.video.file_id if message.video else None
+                    if candidate and media_id and candidate["photo"] == media_id:
                         auction_id = candidate["id"]
             if auction_id:
                 await self.store_call(self.store.attach, auction_id, origin.message_id,
@@ -397,12 +398,15 @@ class AuctionBot:
                   f'💎 ⚜️ {html.escape(row["rarity"])}\n'
                   f'🆔 {row["id"]}\n'
                   f'🎴Start Bid - {money(row["start"])}')
-            results.append(InlineQueryResultCachedPhoto(
-                id=str(row["id"]),photo_file_id=row["photo"],
-                title=f'#{row["id"]} · {row["name"]}',
+            result_kwargs = dict(
+                id=str(row["id"]), title=f'#{row["id"]} · {row["name"]}',
                 description=f'{row["anime"]} · {row["rarity"]} · Next bid {money(minimum)}',
-                caption=text,parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open original post · Comments",url=url,api_kwargs={"style":"primary"})]])))
+                caption=text, parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open original post · Comments",url=url,api_kwargs={"style":"primary"})]]))
+            if row.get("media_type", "photo") == "video":
+                results.append(InlineQueryResultCachedVideo(video_file_id=row["photo"], **result_kwargs))
+            else:
+                results.append(InlineQueryResultCachedPhoto(photo_file_id=row["photo"], **result_kwargs))
         if not results and offset == 0:
             text = ("ရှာထားတဲ့ကဒ်နဲ့ ကိုက်ညီတဲ့ လေလံ မတွေ့ပါ။" if query.query.strip()
                     else "လက်ရှိ လေလံတင်ထားတဲ့ကဒ် မရှိသေးပါ။")
@@ -917,9 +921,14 @@ class AuctionBot:
             return
         text = (message.text or "").strip()
         if step == "photo":
-            if not message.photo:
-                raise RuleError("Photo အဖြစ်ပို့ပါ (document မဟုတ်ပါ)။")
-            draft[step] = message.photo[-1].file_id
+            if message.photo:
+                draft[step] = message.photo[-1].file_id
+                draft["media_type"] = "photo"
+            elif message.video:
+                draft[step] = message.video.file_id
+                draft["media_type"] = "video"
+            else:
+                raise RuleError("Photo သို့ video အဖြစ်ပို့ပါ (document မဟုတ်ပါ)။")
         elif step in ("name", "anime", "rarity"):
             maximum = 24 if step == "rarity" else 60
             if not text or len(text) > maximum or any(ord(c) < 32 for c in text):
@@ -943,10 +952,15 @@ class AuctionBot:
             self.store_call(self.store.get, "wallet_mode"),
         )
         row = dict(draft, id="DRAFT", increment=int(increment), wallet_required=int(wallet_mode))
-        await message.reply_photo(draft["photo"], caption=caption(row), parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [button("✅ Publish", f'publish:{draft["nonce"]}', "success"),
-                 button("❌ Cancel", f'discard:{draft["nonce"]}', "danger")]]))
+        markup = InlineKeyboardMarkup([
+            [button("✅ Publish", f'publish:{draft["nonce"]}', "success"),
+             button("❌ Cancel", f'discard:{draft["nonce"]}', "danger")]])
+        if draft.get("media_type", "photo") == "video":
+            await message.reply_video(draft["photo"], caption=caption(row), parse_mode="HTML",
+                                      reply_markup=markup)
+        else:
+            await message.reply_photo(draft["photo"], caption=caption(row), parse_mode="HTML",
+                                      reply_markup=markup)
 
     async def callback(self, update, context):
         query = update.callback_query
@@ -1063,7 +1077,12 @@ class AuctionBot:
             context.user_data.pop("draft", None)
             row = await self.store_call(self.store.auction, auction_id)
             try:
-                post = await context.bot.send_photo(row["channel_id"], row["photo"], caption=caption(row), parse_mode="HTML")
+                if row.get("media_type", "photo") == "video":
+                    post = await context.bot.send_video(row["channel_id"], row["photo"],
+                                                        caption=caption(row), parse_mode="HTML")
+                else:
+                    post = await context.bot.send_photo(row["channel_id"], row["photo"],
+                                                        caption=caption(row), parse_mode="HTML")
             except TelegramError:
                 await query.message.reply_text(f"⚠️ #{auction_id} publication မသေချာပါ။ ထပ်မတင်သေးပါနှင့်။ Channel စစ်ပါ။ Auto-forward ရရင် bot ကပြန်ချိတ်ပါမယ်။ Post မရှိတာသေချာမှ /cancelauction {auction_id} နဲ့ပိတ်ပြီး အသစ်တင်ပါ။")
                 return

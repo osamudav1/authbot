@@ -109,6 +109,7 @@ class MongoStore:
             if not channel or not group: raise RuleError("/setchannel နှင့် /setgroup အရင်သတ်မှတ်ပါ။")
             aid=self._next("auctions",s)
             row={k:card[k] for k in ("photo","name","anime","rarity","start")}
+            row["media_type"] = card.get("media_type", "photo")
             row.update(_id=aid,id=aid,increment=int(self.get("increment",session=s)),ends=ends,
                        channel_id=int(channel),group_id=int(group),post_id=None,root_id=None,
                        status="publishing",highest=None,winner_id=None,winner_name=None,

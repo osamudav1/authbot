@@ -63,11 +63,11 @@ Long polling သုံးသည်။ Public website / webhook server မလိ�
 
 ### Card ထည့်ပုံ
 
-Owner က private chat မှာ `/new` ပို့ပြီး prompt တစ်ခုစီကိုဖြေပါ။
+Owner က private chat မှာ `/new` ပို့ပြီး prompt တစ်ခုစီကိုဖြေပါ။ ပထမအဆင့်မှာ photo သို့ video ပို့နိုင်သည်။
 
 | Field | Example |
 | --- | --- |
-| Photo | Telegram photo အဖြစ်ပို့ရန် (file document မဟုတ်) |
+| Photo / Video | Telegram photo သို့ video အဖြစ်ပို့ရန် (file document မဟုတ်) |
 | Name | Rem |
 | Anime | Re:Zero |
 | Rarity | SSR |
