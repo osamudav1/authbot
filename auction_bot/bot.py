@@ -556,7 +556,7 @@ class AuctionBot:
         if changed:
             await message.reply_text(f"🎁 {money(amount)} ကို {target.full_name} ဆီ လက်ဆောင်ပို့ပြီးပါပြီ။")
         else:
-            await message.reply_text("ဒီ coin gift ကို အရင်က လုပ်ပြီးပါပြီ။ ထပ်မံမလွှဲပါ။")
+            await message.reply_text("ဒီ coin gift ကို အရင်က လုပ်ပြီးပါပြီ။ ထပ်မံလွှဲ၍မရပါ။")
 
     async def pvp_request(self, args, message, user):
         if not user or user.is_bot:
@@ -582,8 +582,8 @@ class AuctionBot:
         text = (f'⚔️ PvP စိန်ခေါ်မှု\n\n{pvp_name(user.id,user.full_name)}\n'
                 f'🪙 လောင်းကြေး: <b>{money(amount)}</b> တစ်ယောက်စီ\n'
                 f'ပြိုင်ဘက်: {pvp_name(target.id,target.full_name)}\n\n'
-                f'{pvp_name(target.id,target.full_name)} က Confirm နှိပ်မှ ပွဲစပါမယ်။ '
-                'နှစ်ဖက်စလုံးမှာ သတ်မှတ်ထားတဲ့ coin ပမာဏ အပြည့်ရှိရပါမယ်။')
+                f'{pvp_name(target.id,target.full_name)} က Confirm Waiting။ '
+                '___________________________')
         try:
             posted = await message.reply_text(text, parse_mode="HTML", reply_markup=markup)
             await self.store_call(self.store.set_pvp_message, game["id"], posted.message_id)
