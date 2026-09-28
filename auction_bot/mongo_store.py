@@ -455,9 +455,9 @@ class MongoStore:
                 self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":pot}},session=s)
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom prize · {game_id}",actor_id=None,auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
-                self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner},"$addToSet":{"revealed":number}},session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"last_click":number},"$addToSet":{"revealed":number}},session=s)
             else:
-                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"]}},session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"],"last_click":number}},session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(pick)
 

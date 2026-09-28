@@ -238,7 +238,7 @@ def boom_text(game):
     if game.get("status") == "finished":
         winner=game.get("winner_id")
         name=game["requester_name"] if winner==game["requester_id"] else game["target_name"]
-        return text + f'🏆 Winner: {pvp_name(winner,name)}\n🪙 Prize: {money(game["amount"]*2)}'
+        return text + f'🏆 Winner: {pvp_name(winner,name)}\n🪙 Prize: {money(game["amount"]*2)}\n🫆 Last Click - {game.get("last_click", "-")}'
     turn=game.get("turn_id")
     name=game["requester_name"] if turn==game["requester_id"] else game["target_name"]
     return text + f'🎯 Turn: {pvp_name(turn,name)}\nButton တစ်ခုရွေးပါ။'
