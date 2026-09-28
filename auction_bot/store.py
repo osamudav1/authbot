@@ -454,14 +454,24 @@ class Store:
             if step < 5:
                 self.db.execute("UPDATE pvp_games SET step=?,next_at=? WHERE id=? AND status='running'", (step,now+1,game_id))
                 return self._pvp_game(game_id)
-            winner_id = row["requester_id"] if row["final_percent"] > 50 else row["target_id"]
-            prize = row["amount"] * 2
-            wallet = self.db.execute("SELECT balance FROM wallets WHERE user_id=?", (winner_id,)).fetchone()
-            if not wallet:
-                raise RuleError("Winner wallet မတွေ့ပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
-            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (prize,winner_id))
+            requester_percent = row["final_percent"]
+            target_percent = 100 - requester_percent
+            winner_id = row["requester_id"] if requester_percent > 50 else row["target_id"]
+            loser_id = row["target_id"] if winner_id == row["requester_id"] else row["requester_id"]
+            loser_percent = target_percent if winner_id == row["requester_id"] else requester_percent
+            pot = row["amount"] * 2
+            loser_payout = 0 if loser_percent > 30 else pot * loser_percent // 100
+            winner_payout = pot - loser_payout
+            for user_id in (winner_id, loser_id):
+                if not self.db.execute("SELECT 1 FROM wallets WHERE user_id=?", (user_id,)).fetchone():
+                    raise RuleError("Winner/loser wallet မတွေ့ပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
+            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (winner_payout,winner_id))
             self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,'pvp_win',?,?,?,?)",
-                            (winner_id,prize,f"PvP prize · {game_id}",None,f"pvp:{game_id}:prize",now))
+                            (winner_id,winner_payout,f"PvP prize · {game_id}",None,f"pvp:{game_id}:prize",now))
+            if loser_payout:
+                self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (loser_payout,loser_id))
+                self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,'pvp_refund',?,?,?,?)",
+                                (loser_id,loser_payout,f"PvP refund · {game_id}",None,f"pvp:{game_id}:refund",now))
             self.db.execute("UPDATE pvp_games SET status='finished',winner_id=?,step=5,next_at=NULL WHERE id=?", (winner_id,game_id))
             return self._pvp_game(game_id)
 

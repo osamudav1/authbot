@@ -66,6 +66,23 @@ class PvPStoreTests(unittest.TestCase):
         self.store.mark_pvp_slot_notified("payout")
         self.assertEqual(self.store.pending_pvp_slot_notifications(), [])
 
+    def test_pvp_payout_uses_redeem_percentage_until_loser_exceeds_30(self):
+        self.credit(1)
+        self.credit(2)
+        game = self.request("split", 1, 2)
+        self.store.accept_pvp(game["id"], 2, 80, now=100)
+        for tick in range(1, 6):
+            game = self.store.advance_pvp(game["id"], now=100 + tick)
+        self.assertEqual(self.store.wallet_balance(1)["total"], 130000)
+        self.assertEqual(self.store.wallet_balance(2)["total"], 70000)
+
+        game = self.request("full-pot", 1, 2)
+        self.store.accept_pvp(game["id"], 2, 65, now=200)
+        for tick in range(1, 6):
+            game = self.store.advance_pvp(game["id"], now=200 + tick)
+        self.assertEqual(self.store.wallet_balance(1)["total"], 180000)
+        self.assertEqual(self.store.wallet_balance(2)["total"], 20000)
+
     def test_cannot_accept_a_sixth_simultaneous_round(self):
         for user_id in range(1, 13):
             self.credit(user_id, 50000)
