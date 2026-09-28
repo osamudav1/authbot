@@ -196,8 +196,25 @@ class AuctionBot:
         self.last_caption_at = {}
         self.bid_edit_due = {}
         self.winner_retry_after = {}
+        self.button_cooldown_until = {}
         self.global_edit_after = 0
         self.tick_lock = asyncio.Lock()
+
+    def button_cooldown(self, user):
+        """Return remaining seconds for non-owner callback clicks, then arm it."""
+        if not user or user.is_bot or user.id in self.config.owners:
+            return 0.0
+        now = time.monotonic()
+        until = self.button_cooldown_until.get(user.id, 0.0)
+        if until > now:
+            return until - now
+        self.button_cooldown_until[user.id] = now + 2.0
+        if len(self.button_cooldown_until) > 2048:
+            self.button_cooldown_until = {
+                uid: expiry for uid, expiry in self.button_cooldown_until.items()
+                if expiry > now
+            }
+        return 0.0
 
     def owner(self, update):
         return bool(update.effective_user and update.effective_user.id in self.config.owners
@@ -657,6 +674,10 @@ class AuctionBot:
 
     async def callback(self, update, context):
         query = update.callback_query
+        remaining = self.button_cooldown(update.effective_user)
+        if remaining:
+            await query.answer(f"ခဏစောင့်ပါ ({remaining:.1f} sec)", show_alert=True)
+            return
         if (query.data or "").startswith("user:"):
             if not update.effective_chat or update.effective_chat.type != "private" or not update.effective_user or update.effective_user.is_bot:
                 await query.answer("Bot private chat မှာ /menu ကိုသုံးပါ။", show_alert=True)
