@@ -40,7 +40,7 @@ OWNER_ACTIONS = {
     "resume": "Bid ပြန်ဖွင့်ရန်",
     "setchannel": "Channel သတ်မှတ်ရန်: /setchannel -100…",
     "setgroup": "Discussion group သတ်မှတ်ရန်: /setgroup -100…",
-    "increment": "လေလံအသစ်များအတွက် increment: /increment 50.00",
+    "increment": "လေလံအသစ်များအတွက် increment: /increment 250.00",
     "ban": "Bid ပိတ်ရန်: /ban USER_ID",
     "unban": "Bid ပြန်ဖွင့်ရန်: /unban USER_ID",
     "banned": "ပိတ်ထားသူစာရင်း",

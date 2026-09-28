@@ -31,7 +31,9 @@ class MongoStore:
         self.db.pvp_games.create_index([("group_id", 1), ("status", 1), ("next_at", 1)])
         self.db.pvp_games.create_index([("status", 1), ("requester_id", 1), ("target_id", 1)])
         self.db.coord.update_one({"_id":"ledger"}, {"$setOnInsert":{"version":0}}, upsert=True)
-        for key, value in (("wallet_mode","1"),("increment","5000"),("paused","0"),
+        # Upgrade only the untouched legacy default; preserve an owner's custom setting.
+        self.db.settings.update_one({"_id":"increment","value":"5000"}, {"$set":{"value":"25000"}})
+        for key, value in (("wallet_mode","1"),("increment","25000"),("paused","0"),
                            ("rules","Bid ငွေကို ယာယီထိန်းထားပြီး winner ကို လေလံပိတ်ချိန် ငွေဖြတ်ပါမယ်။")):
             self.db.settings.update_one({"_id":key},{"$setOnInsert":{"value":value}},upsert=True)
 
