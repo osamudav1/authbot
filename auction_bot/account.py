@@ -125,7 +125,8 @@ def transactions(store, user_id):
         sign = "+" if row["delta"]>0 else "−"
         date = datetime.fromtimestamp(row["created"],timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         auction = f' · Auction #{row["auction_id"]}' if row["auction_id"] else ""
-        lines.append(f'\n{sign}{money(abs(row["delta"]))} · {row["kind"]}{auction}\n{date}\n{html.escape(row["note"][:80] + ("…" if len(row["note"])>80 else ""))}')
+        kind = {"gift_sent": "Gift sent", "gift_received": "Gift received"}.get(row["kind"], row["kind"])
+        lines.append(f'\n{sign}{money(abs(row["delta"]))} · {kind}{auction}\n{date}\n{html.escape(row["note"][:80] + ("…" if len(row["note"])>80 else ""))}')
     if not rows:
         lines.append("ငွေစာရင်း မရှိသေးပါ။")
     return "\n".join(lines)

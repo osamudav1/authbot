@@ -76,7 +76,7 @@ AUCTION_GROUP_COMMANDS = [
 PVP_GROUP_COMMANDS = [
     BotCommand("pvp", "ပြိုင်ဘက်ကို coin wager PvP စိန်ခေါ်ရန် (သူ့ message ကို reply လုပ်ပါ)"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
-    BotCommand("bcoin", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
+    BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
 ]
 
 PROMPTS = {
@@ -429,13 +429,15 @@ class AuctionBot:
             if self.pvp_group(update):
                 if command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
-                elif command in {"bal", "bcoin"}:
+                elif command == "bal":
                     if args:
-                        raise RuleError("Group မှာ /bal သို့ /bcoin ကို argument မပါဘဲ သုံးပါ။")
+                        raise RuleError("Group မှာ /bal ကို argument မပါဘဲ သုံးပါ။")
                     if not update.effective_user or update.effective_user.is_bot:
                         return
                     row = self.store.wallet_balance(update.effective_user.id)
                     await message.reply_text(f"🪙 Coin balance\n\nAvailable: {money(row['available'])}")
+                elif command == "bcoin":
+                    await self.pvp_gift_command(args, message, update.effective_user)
                 return
             if command == "auther" and self.group(update):
                 await self.auther_command(message, context)
@@ -519,6 +521,25 @@ class AuctionBot:
             delta = amount if command == "credit" else -amount
             return user_id, delta, " ".join(args[2:])
         return auth_adjustment(args, message)
+
+    async def pvp_gift_command(self, args, message, user):
+        if not user or user.is_bot:
+            raise RuleError("Telegram user account နဲ့ပဲ coin gift ပို့နိုင်ပါတယ်။")
+        if len(args) != 1:
+            raise RuleError("လက်ဆောင်လက်ခံမယ့် user ရဲ့ message ကို reply လုပ်ပြီး /bcoin 100 ပုံစံရေးပါ။")
+        reply = message.reply_to_message
+        target = reply.from_user if reply and not reply.sender_chat else None
+        if not target or target.is_bot:
+            raise RuleError("Coin gift လက်ခံမယ့် user ရဲ့ message ကို reply လုပ်ပါ။")
+        if target.id == user.id:
+            raise RuleError("ကိုယ့်ကိုယ်ကို coin gift ပို့လို့မရပါ။")
+        amount = cents(args[0])
+        event_key = f"pvp-gift:{message.chat_id}:{message.message_id}"
+        changed = self.store.transfer_coins(message.chat_id,user.id,target.id,amount,event_key)
+        if changed:
+            await message.reply_text(f"🎁 {money(amount)} ကို {target.full_name} ဆီ လက်ဆောင်ပို့ပြီးပါပြီ။")
+        else:
+            await message.reply_text("ဒီ coin gift ကို အရင်က လုပ်ပြီးပါပြီ။ ထပ်မံမလွှဲပါ။")
 
     async def pvp_request(self, args, message, user):
         if not user or user.is_bot:

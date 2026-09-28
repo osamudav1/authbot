@@ -8,7 +8,7 @@ Telegram waifu ကဒ်လေလံနှင့် PvP bot — လေလံ bid
 - `/new` → photo → card name → anime name → rarity → starting bid → တင်ပြီးပိတ်မည့် ကြာချိန် (`1sec`, `5min`, `1hours`, `1day`) → preview → Publish။
 - Owner သတ်မှတ်ထားသော channel ထဲ photo post တင်ပေးသည်။
 - အဲဒီ channel နှင့်ချိတ်ထားသော discussion supergroup ရဲ့ auction comments ထဲမှာ `/bid 10.50`။
-- လေလံအတွက် discussion group နှင့် PvP အတွက် သီးခြား game group သတ်မှတ်နိုင်သည်။ အခြား groups ကို မတုံ့ပြန်ပါ။ PvP group မှာ `/pvp`, `/bal`, `/bcoin` သုံးနိုင်သည်။ Non-owner private chats မှာ `/start` welcome နှင့် ကိုယ်ပိုင် account commands ကိုသုံးနိုင်သည်။ Owner admin commands ကို private chat မှာသုံးပါ။ `/auth` ကို owner က သတ်မှတ်ထားသော discussion group မှာလည်း သုံးနိုင်သည်။
+- လေလံအတွက် discussion group နှင့် PvP အတွက် သီးခြား game group သတ်မှတ်နိုင်သည်။ အခြား groups ကို မတုံ့ပြန်ပါ။ PvP group မှာ `/pvp`, `/bal`, `/bcoin` သုံးနိုင်ပြီး `/bcoin` က reply လုပ်ထားသူကို coin gift ပို့သည်။ Non-owner private chats မှာ `/start` welcome နှင့် ကိုယ်ပိုင် account commands ကိုသုံးနိုင်သည်။ Owner admin commands ကို private chat မှာသုံးပါ။ `/auth` ကို owner က သတ်မှတ်ထားသော discussion group မှာလည်း သုံးနိုင်သည်။
 - Bid အသစ်ကို ချက်ချင်းပြင်ပြီး ဆက်တိုက် bids များကို နောက်ဆုံး bid မှ **၂ စက္ကန့်ငြိမ်မှ** channel caption တစ်ခါတည်း ပြင်ပေးသည်။ Telegram rate limit / network error ရှိရင် နောက်ကျနိုင်သည်။ မပြောင်းလဲသည့် post ကို ထပ်မပြင်ပါ။
 - Bid ရောက်လာချိန်အလိုက် database transaction ဖြင့် လက်ခံသည်။ တူညီသည့် bid ပမာဏကို ပြိုင်ဆွဲလျှင် ပထမ commit ဖြစ်သူ အနိုင်ရသည်။
 - End time အတိအကျရောက်လျှင် bid မလက်ခံတော့ပါ။ နောက် worker tick မှာ winner ကို မူရင်း post ထဲပြပေးသည်။ Bid မရှိပါက winner မရှိပါ။
@@ -141,24 +141,26 @@ Ban လုပ်ခြင်းသည် ယခင် bids များကို
 
 ## PvP coin game
 
-Owner သည် bot private chat မှ `/setpvpgp -100…` ဖြင့် သီးခြား supergroup သတ်မှတ်ပါ။ Bot ကို အဲဒီ group ထဲထည့်ပါ။ PvP group command menu မှာ `/pvp`, `/bal`, `/bcoin` သုံးခုသာ ပေါ်မည်။ `/bcoin` သည် `/bal` ကဲ့သို့ ကိုယ့် available coin ကိုပြသည်။
+Owner သည် bot private chat မှ `/setpvpgp -100…` ဖြင့် သီးခြား supergroup သတ်မှတ်ပါ။ Bot ကို အဲဒီ group ထဲထည့်ပါ။ PvP group command menu မှာ `/pvp`, `/bal`, `/bcoin` သုံးခုသာ ပေါ်မည်။ `/bal` သည် ကိုယ့်လက်ကျန်ကိုပြပြီး `/bcoin` ကို PvP game group ထဲမှာသာ coin gift ပို့ရန်သုံးပါ။
 
 ပြိုင်ဘက်၏ group message ကို reply လုပ်ပြီး `/pvp 500` သို့မဟုတ် 500 coin ထက်များသောပမာဏ ပို့ပါ။ Requester မှာ လောင်းကြေးပြည့်ရှိမှ request တင်နိုင်သည်။ ဖိတ်ခေါ်ခံရသူက **Confirm** လုပ်သည့်အချိန်တွင် နှစ်ဖက်စလုံး၏ လက်ကျန်နှင့် game slot ကိုပြန်စစ်ပြီး တစ်ယောက်စီ၏ wager ကိုဖယ်ထားသည်။ ဖိတ်ခေါ်ခံရသူက **Cancel** လုပ်နိုင်ပြီး requester ကလည်း pending request ကို cancel လုပ်နိုင်သည်။
 
 အတည်ပြုပြီးနောက် 50/50 ရလဒ်အတွက် animation bar ကို တစ်စက္ကန့်တစ်ကြိမ်၊ ၅ ကြိမ် update လုပ်သည်။ နောက်ဆုံးမှာ ဥပမာ 60/40 ပြလျှင် 60% ဘက်ကနိုင်သည်။ အနိုင်ရသူကို နှစ်ဖက် wager စုစုပေါင်း ပြန်ပေါင်းပေးပြီး ရှုံးသူ wager ကိုဆုံးရှုံးသည်။ Group တစ်ခုတွင် တစ်ချိန်တည်း running ပွဲ ၅ ပွဲအထိသာ ကစားနိုင်ပြီး user တစ်ယောက်သည် တစ်ပွဲတည်းသာ ဝင်နိုင်သည်။ ပွဲပြီး၍ slot လွတ်တိုင်း `1Round လူရှင်းပါပီ` အသိပေးစာတစ်စောင်ပို့သည်။
 
+PvP game group ထဲမှာသာ အခြား user ရဲ့ message ကို reply လုပ်ပြီး `/bcoin 100` ပို့လျှင် ကိုယ့် available balance မှ 100 coin ကို သူ့ balance ထဲ တစ်ခါတည်းပြောင်းပေးသည်။ ပမာဏသည် coin ဖြစ်ပြီး decimal ၂ နေရာအထိရသည်။ ကိုယ့်ကိုယ်ကို၊ bot ကို၊ anonymous/channel message ကို gift မပို့နိုင်ပါ။ Gift မပို့မီ sender ၏ available coin နှင့် receiver ၏ wallet limit ကိုစစ်သည်; လက်ကျန်စစ်ရန် `/bal` သုံးပါ။
+
 Auction discussion group တွင် `/auther` ပို့လျှင် နောက်ဆုံး auction ပုံအောက်တွင် Inline search ခလုတ်တပ်ပေးသည်။
 
 ## User account / history / wallet
 
-User က bot private chat မှာ `/start` ပို့ပြီး **My account** နှိပ်ပါ။ Owner ပြင်ထားသော welcome link buttons များအောက်မှာ account ခလုတ် သီးသန့်ပါသည်။ `/menu` နဲ့လည်းဖွင့်နိုင်သည်။ History နှင့် wallet history commands ကို group ထဲမပြပါ။ PvP group မှာ `/bal` နှင့် `/bcoin` သုံးနိုင်သည်။
+User က bot private chat မှာ `/start` ပို့ပြီး **My account** နှိပ်ပါ။ Owner ပြင်ထားသော welcome link buttons များအောက်မှာ account ခလုတ် သီးသန့်ပါသည်။ `/menu` နဲ့လည်းဖွင့်နိုင်သည်။ History နှင့် wallet history commands ကို group ထဲမပြပါ။ PvP game group မှာ `/bal` က လက်ကျန်စစ်ပြီး `/bcoin` က reply လုပ်ထားသူကို coin gift ပို့သည်။
 
 | Command | မြင်ရမည့်အရာ |
 | --- | --- |
 | `/history` | ပါဝင်ခဲ့သော နောက်ဆုံးလေလံ **10 ခု** (လေလံတစ်ခုကိုတစ်ကြိမ်)၊ ကိုယ့်အမြင့်ဆုံး bid၊ နောက်ဆုံး highest bid၊ နိုင်/ရှုံး/ဦးဆောင်/ကျော်ခံရ/ဖျက်သိမ်း အခြေအနေ |
 | `/wins` | ကိုယ်နိုင်ခဲ့သော နောက်ဆုံးကဒ် **10 ခု** နှင့် post links |
 | `/auctions` | Active auctions အရေအတွက်နှင့် Inline search/Back ခလုတ်များ |
-| `/balance` သို့ `/bal` (`/bcoin` ပါ) | Available / Held / Total coin နှင့် ကိုယ့် user ID |
+| `/balance` သို့ `/bal` (private chat မှာ `/bcoin` လည်း balance alias) | Available / Held / Total coin နှင့် ကိုယ့် user ID |
 | `/transactions` | ကိုယ့် coin အဝင်/အထွက်မှတ်တမ်း နောက်ဆုံး **10 ခု** |
 
 History ကို နောက်ဆုံး bid ပါဝင်ခဲ့သည့်အစီအစဉ်ဖြင့် စီသည်။ Cancelled လေလံကို lost ဟု မတွက်ပါ။ ကိုယ့် user ID ကို Telegram မှစစ်သဖြင့် အခြားသူရဲ့ history/balance ကို parameter ပြောင်းပြီးကြည့်မရပါ။ Private channel links ကိုဖွင့်ရန် channel membership လိုနိုင်သည်။ Wallet history note ရှည်လျှင် preview ကိုသာပြပြီး note အပြည့်ကို database ထဲသိမ်းသည်။

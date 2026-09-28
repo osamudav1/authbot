@@ -363,6 +363,45 @@ class Store:
     def wallet_history(self, user_id):
         return [dict(row) for row in self.db.execute("SELECT * FROM wallet_events WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,))]
 
+    def transfer_coins(self, group_id, sender_id, recipient_id, amount, event_key):
+        if (type(sender_id) is not int or type(recipient_id) is not int
+                or not 0 < sender_id < 2**63 or not 0 < recipient_id < 2**63
+                or sender_id == recipient_id or type(amount) is not int
+                or not 0 < amount <= 99999999999 or not event_key):
+            raise RuleError("Coin gift ပမာဏ သို့မဟုတ် user ID မမှန်ပါ။")
+        sent_key, received_key = f"{event_key}:sent", f"{event_key}:received"
+        with self.transaction():
+            if str(group_id) != self.get("pvp_group_id"):
+                raise RuleError("Coin gift ကို သတ်မှတ်ထားတဲ့ PvP game group မှာပဲ ပို့နိုင်ပါတယ်။")
+            rows = self.db.execute(
+                "SELECT event_key,user_id,delta,actor_id FROM wallet_events WHERE event_key IN (?,?)",
+                (sent_key, received_key)).fetchall()
+            if rows:
+                existing = {row["event_key"]: (row["user_id"],row["delta"],row["actor_id"]) for row in rows}
+                expected = {sent_key: (sender_id,-amount,sender_id),
+                            received_key: (recipient_id,amount,sender_id)}
+                if existing == expected:
+                    return False
+                raise RuleError("ဒီ gift request ကို ပြင်ပြီးပြန်သုံးလို့မရပါ။")
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (sender_id,))
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (recipient_id,))
+            sender = self.wallet_balance(sender_id)
+            if sender["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(sender['available'])} ပါ။")
+            recipient = self.wallet_balance(recipient_id)
+            if recipient["total"] + amount > 99999999999:
+                raise RuleError("လက်ခံသူ၏ wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            self.db.execute("UPDATE wallets SET balance=balance-? WHERE user_id=?", (amount,sender_id))
+            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (amount,recipient_id))
+            created = int(time.time())
+            self.db.execute("""INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created)
+              VALUES (?,?, 'gift_sent', ?,?,?,?)""",
+              (sender_id,-amount,f"Gift to user {recipient_id}",sender_id,sent_key,created))
+            self.db.execute("""INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created)
+              VALUES (?,?, 'gift_received', ?,?,?,?)""",
+              (recipient_id,amount,f"Gift from user {sender_id}",sender_id,received_key,created))
+            return True
+
     def _pvp_game(self, game_id):
         row = self.db.execute("SELECT * FROM pvp_games WHERE id=?", (game_id,)).fetchone()
         if not row:

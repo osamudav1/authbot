@@ -298,6 +298,38 @@ class MongoStore:
 
     def wallet_history(self,user_id):return [self._clean(r) for r in self.db.wallet_events.find({"user_id":user_id}).sort("id",-1).limit(10)]
 
+    def transfer_coins(self,group_id,sender_id,recipient_id,amount,event_key):
+        if (type(sender_id) is not int or type(recipient_id) is not int
+                or not 0<sender_id<2**63 or not 0<recipient_id<2**63
+                or sender_id==recipient_id or type(amount) is not int
+                or not 0<amount<=99999999999 or not event_key):
+            raise RuleError("Coin gift ပမာဏ သို့မဟုတ် user ID မမှန်ပါ။")
+        sent_key,received_key=f"{event_key}:sent",f"{event_key}:received"
+        def transfer(s):
+            if str(group_id)!=str(self.get("pvp_group_id",session=s)):
+                raise RuleError("Coin gift ကို သတ်မှတ်ထားတဲ့ PvP game group မှာပဲ ပို့နိုင်ပါတယ်။")
+            rows=list(self.db.wallet_events.find({"event_key":{"$in":[sent_key,received_key]}},session=s))
+            if rows:
+                existing={r["event_key"]:(r["user_id"],r["delta"],r["actor_id"]) for r in rows}
+                expected={sent_key:(sender_id,-amount,sender_id),received_key:(recipient_id,amount,sender_id)}
+                if existing==expected:return False
+                raise RuleError("ဒီ gift request ကို ပြင်ပြီးပြန်သုံးလို့မရပါ။")
+            sender=self.wallet_balance(sender_id,s)
+            if sender["available"]<amount:raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(sender['available'])} ပါ။")
+            recipient=self.wallet_balance(recipient_id,s)
+            if recipient["total"]+amount>99999999999:raise RuleError("လက်ခံသူ၏ wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            self.db.wallets.update_one({"_id":sender_id},{"$inc":{"balance":-amount},"$set":{"user_id":sender_id}},upsert=True,session=s)
+            self.db.wallets.update_one({"_id":recipient_id},{"$inc":{"balance":amount},"$set":{"user_id":recipient_id}},upsert=True,session=s)
+            created=int(time.time())
+            for uid,delta,kind,note,key in (
+                (sender_id,-amount,"gift_sent",f"Gift to user {recipient_id}",sent_key),
+                (recipient_id,amount,"gift_received",f"Gift from user {sender_id}",received_key)):
+                eid=self._next("wallet_events",s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=delta,kind=kind,
+                    note=note,actor_id=sender_id,auction_id=None,event_key=key,created=created),session=s)
+            return True
+        return self._tx(transfer)
+
     def _pvp_game(self, game_id, session=None):
         row=self.db.pvp_games.find_one({"_id":game_id},session=session)
         if not row:raise RuleError("PvP request မတွေ့ပါ။")

@@ -116,6 +116,45 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(signed_owner_message_args("-$5 correction"), ["-$5", "correction"])
         self.assertEqual(usd_equivalent(cents("500")), "$100.00")
 
+    def test_pvp_coin_gift_is_atomic_idempotent_and_group_limited(self):
+        self.credit(1, cents("1000"))
+        self.assertTrue(self.store.transfer_coins(-100123, 1, 2, cents("250"), "gift:group:message"))
+        self.assertEqual(self.store.wallet_balance(1)["available"], cents("750"))
+        self.assertEqual(self.store.wallet_balance(2)["available"], cents("250"))
+        self.assertFalse(self.store.transfer_coins(-100123, 1, 2, cents("250"), "gift:group:message"))
+        with self.assertRaisesRegex(RuleError, "Coin မလုံလောက်"):
+            self.store.transfer_coins(-100123, 1, 3, cents("800"), "gift:insufficient")
+        with self.assertRaisesRegex(RuleError, "PvP game group"):
+            self.store.transfer_coins(-100999, 1, 3, cents("100"), "gift:wrong-group")
+        self.assertEqual(self.store.wallet_balance(1)["available"], cents("750"))
+        self.assertEqual(self.store.wallet_balance(3)["total"], 0)
+
+    def test_bcoin_reply_sends_coin_gift_to_replied_user(self):
+        class FakeMessage:
+            chat_id = -100123
+            message_id = 55
+            reply_to_message = SimpleNamespace(
+                sender_chat=None,
+                from_user=SimpleNamespace(id=8, is_bot=False, full_name="Receiver"),
+            )
+
+            def __init__(self):
+                self.sent = []
+
+            async def reply_text(self, text):
+                self.sent.append(text)
+
+        self.credit(7, cents("200"))
+        bot = object.__new__(AuctionBot)
+        bot.store = self.store
+        message = FakeMessage()
+        asyncio.run(bot.pvp_gift_command(["100"], message,
+                                         SimpleNamespace(id=7, is_bot=False)))
+        self.assertEqual(self.store.wallet_balance(7)["available"], cents("100"))
+        self.assertEqual(self.store.wallet_balance(8)["available"], cents("100"))
+        self.assertIn("100.00 coin", message.sent[0])
+        self.assertIn("Receiver", message.sent[0])
+
     def test_button_cooldown_is_two_seconds(self):
         owner_bot = object.__new__(AuctionBot)
         owner_bot.config = SimpleNamespace(owners=set())
