@@ -224,7 +224,8 @@ def boom_markup(game):
         for number in range(start,min(start+3,size+1)):
             label="❄️" if number in revealed else str(number)
             if game.get("status") == "finished" and number in game.get("boom_positions", []):
-                label="💥"
+                owner=game.get("boom_owners",{}).get(str(number))
+                label="🟦" if owner == game["requester_id"] else "🟥"
             row.append(InlineKeyboardButton(label, callback_data=f'boom:pick:{game["id"]}:{number}'))
         rows.append(row)
     return InlineKeyboardMarkup(rows)
