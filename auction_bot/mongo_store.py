@@ -4,7 +4,7 @@ import re
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
-from .domain import MIN_PVP_WAGER, RuleError, money
+from .domain import MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
 
 
 class MongoStore:
@@ -64,6 +64,11 @@ class MongoStore:
         if key=="wallet_mode" and str(value)!="1":
             raise RuleError("Wallet hold ကို ပိတ်၍မရပါ။ Bid အတွက် balance လိုအပ်ပါတယ်။")
         self._tx(lambda s:self.db.settings.update_one({"_id":key},{"$set":{"value":str(value)}},upsert=True,session=s))
+
+    def claim_new_user(self, user_id):
+        result = self.db.new_users.update_one(
+            {"_id": user_id}, {"$setOnInsert": {"created": int(time.time())}}, upsert=True)
+        return result.upserted_id is not None
 
     def target(self, key, value):
         def change(s):
@@ -369,6 +374,23 @@ class MongoStore:
             self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"cancelled"}},session=s)
             return self._pvp_game(game_id,s)
         return self._tx(cancel)
+
+    def expire_pvp(self, now=None):
+        at = time.time() if now is None else now
+        cutoff = at - PVP_REQUEST_TIMEOUT_SECONDS
+        def expire(s):
+            rows = list(self.db.pvp_games.find(
+                {"status": "pending", "created": {"$lte": cutoff}}, session=s))
+            expired = []
+            for row in rows:
+                result = self.db.pvp_games.update_one(
+                    {"_id": row["_id"], "status": "pending"},
+                    {"$set": {"status": "cancelled"}}, session=s)
+                if result.modified_count:
+                    row["status"] = "cancelled"
+                    expired.append(self._clean(row))
+            return expired
+        return self._tx(expire)
 
     def accept_pvp(self,game_id,actor_id,final_percent,now=None):
         if type(final_percent) is not int or not 1<=final_percent<=100:raise RuleError("PvP result မမှန်ပါ။")

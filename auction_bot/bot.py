@@ -436,6 +436,20 @@ class AuctionBot:
                 return
             if private_user:
                 if command == "start":
+                    if getattr(self, "pvp_group_id", ""):
+                        try:
+                            is_new_user = await self.store_call(
+                                self.store.claim_new_user, update.effective_user.id)
+                            if is_new_user:
+                                await context.bot.send_message(
+                                    chat_id=int(self.pvp_group_id),
+                                    text=(f'🆕 New user - {pvp_name(update.effective_user.id, update.effective_user.full_name)} '
+                                          f'(ID: <code>{update.effective_user.id}</code>)'),
+                                    parse_mode="HTML")
+                        except TelegramError:
+                            log.warning("New-user notification failed for user %s", update.effective_user.id)
+                        except PyMongoError:
+                            log.warning("New-user notification state unavailable for user %s", update.effective_user.id)
                     value = await self.store_call(welcome.load, self.store)
                     await welcome.send(message, value, update.effective_user, context.bot)
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
@@ -582,7 +596,7 @@ class AuctionBot:
         text = (f'⚔️ PvP စိန်ခေါ်မှု\n\n{pvp_name(user.id,user.full_name)}\n'
                 f'🪙 လောင်းကြေး: <b>{money(amount)}</b> တစ်ယောက်စီ\n'
                 f'ပြိုင်ဘက်: {pvp_name(target.id,target.full_name)}\n\n'
-                f'{pvp_name(target.id,target.full_name)} က Confirm Waiting။ '
+                f'{pvp_name(target.id,target.full_name)} က Confirm Waiting။ 15sec အတွင်း မနှိပ်ပါက ပွဲပယ်ပါမယ်။ '
                 '___________________________')
         try:
             posted = await message.reply_text(text, parse_mode="HTML", reply_markup=markup)
@@ -1117,6 +1131,19 @@ class AuctionBot:
             await self.tick_pvp(context)
 
     async def tick_pvp(self, context):
+        expired = await self.store_call(self.store.expire_pvp)
+        for game in expired:
+            if not game.get("message_id"):
+                continue
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=game["group_id"], message_id=game["message_id"],
+                    text=(f'❌ PvP request 15sec အတွင်း Confirm မလုပ်သဖြင့် အလိုအလျောက် ပယ်ဖျက်ပြီးပါပြီ။\n\n'
+                          f'{pvp_name(game["requester_id"], game["requester_name"])} · '
+                          f'{pvp_name(game["target_id"], game["target_name"])}'),
+                    parse_mode="HTML")
+            except TelegramError:
+                log.warning("Expired PvP request message update failed for round %s", game["id"])
         due_rounds = await self.store_call(self.store.due_pvp)
         for due in due_rounds:
             try:
