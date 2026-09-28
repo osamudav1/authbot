@@ -42,7 +42,9 @@ class Config:
         # One MongoDB connection is used for both databases; only the database
         # and wallet field are separated below.
         org_uri = uri
-        org_database = database
+        org_database = os.getenv("ORG_MONGO_DB", "").strip()
+        if not org_database or any(c in org_database for c in '/\\. "$*<>:|?') or len(org_database.encode())>63:
+            raise ValueError("ORG_MONGO_DB is invalid")
         org_collection = os.getenv("ORG_USER_COLLECTION", "users").strip()
         org_id_field = os.getenv("ORG_USER_ID_FIELD", "_id").strip()
         org_balance_field = os.getenv("ORG_BALANCE_FIELD", "coins").strip()

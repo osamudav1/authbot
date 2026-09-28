@@ -35,6 +35,7 @@ CHANNEL_ID=-1001234567890
 GROUP_ID=-1009876543210
 MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@YOUR_CLUSTER/?retryWrites=true&w=majority
 MONGODB_DATABASE=authbid_bot
+ORG_MONGO_DB=waifu_bot
 ORG_USER_COLLECTION=users
 ORG_USER_ID_FIELD=_id
 ORG_BALANCE_FIELD=coins
@@ -46,8 +47,8 @@ ORG_BALANCE_SCALE=100
 - `CHANNEL_ID`, `GROUP_ID`: Numeric chat IDs။ အစမှာ ချန်ထားပြီး owner private chat ရဲ့ `/setchannel` နှင့် `/setgroup` နဲ့ သတ်မှတ်လည်းရသည်။
 - Environment chat IDs သည် empty database အတွက် bootstrap ဖြစ်သည်။ Bot commands နှင့်သိမ်းထားသော settings က restart ပြီးလည်း အကျုံးဝင်သည်။
 - `MONGODB_URI`: MongoDB Atlas သို့ replica set connection string။ Standalone MongoDB သည် multi-document transactions မရသဖြင့် မသုံးနိုင်ပါ။ `MONGODB_DATABASE`: database name (default `authbid_bot`)။
-- MongoDB URI နှင့် database တစ်ခုတည်းကိုသုံးသည်။ `MONGODB_DATABASE` ထဲက `ORG_USER_COLLECTION` ၏ `ORG_BALANCE_FIELD` တစ်ခုတည်းကိုသာ wallet အဖြစ် ဖတ်/တိုး/လျှော့သည်။ Default သည် `users.coins` ဖြစ်ပြီး `ORG_BALANCE_SCALE=100` ဆိုသည်မှာ `$1.00 = 100` cents ဖြစ်သည်။ User document မရှိလျှင် bot က document အသစ်မဖန်တီးပါ။
-- Org database ၏ အခြား collection/field များကို bot runtime က မရေးပါ။ Auction data နှင့် holds များက bot ကိုယ်ပိုင် collection များသာ အသုံးပြုသည်။
+- MongoDB URI တစ်ခုတည်းကိုသုံးသည်။ `ORG_MONGO_DB` ထဲက `ORG_USER_COLLECTION` ၏ `ORG_BALANCE_FIELD` တစ်ခုတည်းကိုသာ wallet အဖြစ် ဖတ်/တိုး/လျှော့သည်။ ဤ repo ၏ default သည် `waifu_bot.users` ထဲက `coins` ဖြစ်ပြီး `ORG_BALANCE_SCALE=100` ဆိုသည်မှာ `$1.00 = 100` cents ဖြစ်သည်။ User document မရှိလျှင် bot က document အသစ်မဖန်တီးပါ။
+- Auction data၊ holds နှင့် bot audit records များကို `MONGODB_DATABASE` (`authbid_bot`) ထဲမှာ သီးခြားသိမ်းသည်။ Org database ၏ အခြား collection/field များကို bot runtime က မရေးပါ။
 - URI မရှိ/မချိတ်နိုင်လျှင် startup ရပ်သည်။ SQLite သို့ အလိုအလျောက် fallback မလုပ်ပါ။ `.env` နှင့် backups ကို private ထားပါ။
 
 ### Telegram ပြင်ဆင်ခြင်း

@@ -11,13 +11,14 @@ CHANNEL_ID=-1004335666883
 GROUP_ID=your_linked_group_id
 MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@YOUR_CLUSTER/?retryWrites=true&w=majority
 MONGODB_DATABASE=authbid_bot
+ORG_MONGO_DB=waifu_bot
 ORG_USER_COLLECTION=users
 ORG_USER_ID_FIELD=_id
 ORG_BALANCE_FIELD=coins
 ORG_BALANCE_SCALE=100
 ```
 
-MongoDB URI နှင့် database တစ်ခုတည်းကိုသုံးသည်။ Org wallet မှ `users.coins` field တစ်ခုတည်းကိုသာ ဖတ်/တိုး/လျှော့သည်။ User document မရှိလျှင် bot က အသစ်မဖန်တီးပါ။ `.env` ကို GitHub ထဲမတင်ပါနှင့်။
+MongoDB URI တစ်ခုတည်းကိုသုံးသည်။ Auction data ကို `authbid_bot` database ထဲသီးခြားသိမ်းပြီး org wallet မှ `users.coins` field တစ်ခုတည်းကိုသာ ဖတ်/တိုး/လျှော့သည်။ User document မရှိလျှင် bot က အသစ်မဖန်တီးပါ။ `.env` ကို GitHub ထဲမတင်ပါနှင့်။
 
 MongoDB Atlas သို့ transactions ရသော replica set/sharded cluster လိုသည်။ Standalone MongoDB template တစ်ခုတည်းကို transactions မရဘဲ သုံး၍မရပါ။ Database user ကို သတ်မှတ် database အတွက် read/write ခွင့်ပေးပြီး bot service မှချိတ်ဆက်နိုင်အောင် network access စီစဉ်ပါ။ URI password မှ special characters ကို URL-encode လုပ်ပါ။
 
