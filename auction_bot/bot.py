@@ -174,6 +174,16 @@ def usd_equivalent(coin_subunits):
     return f"${whole}" if cents == 0 else f"${whole}.{cents:02d}"
 
 
+def pvp_payouts(game):
+    requester_percent = game["final_percent"]
+    target_percent = 100 - requester_percent
+    winner_id = game["requester_id"] if requester_percent > 50 else game["target_id"]
+    loser_percent = target_percent if winner_id == game["requester_id"] else requester_percent
+    pot = game["amount"] * 2
+    loser_payout = 0 if loser_percent > 25 else pot * loser_percent // 100
+    return pot - loser_payout, loser_payout
+
+
 def pvp_animation_text(game):
     first = game["final_percent"]
     if game["status"] in {"pending", "finished"}:
@@ -194,7 +204,10 @@ def pvp_animation_text(game):
     if game["status"] == "finished":
         winner = game["requester_id"] if game["winner_id"] == game["requester_id"] else game["target_id"]
         winner_name = game["requester_name"] if winner == game["requester_id"] else game["target_name"]
-        text += f'\n\n🏆 Winner: {pvp_name(winner, winner_name)}\n🪙 Prize: {money(game["amount"] * 2)}'
+        winner_payout, loser_payout = pvp_payouts(game)
+        text += f'\n\n🏆 Winner: {pvp_name(winner, winner_name)}\n🪙 Prize: {money(winner_payout)}'
+        if loser_payout:
+            text += f'\n↩️ Refund: {money(loser_payout)}'
     else:
         text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး ပွဲပြီးချိန်မှာ အနိုင်ရသူကို ဆုငွေပေးပါမယ်။"
     return text

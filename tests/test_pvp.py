@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from auction_bot.store import RuleError, Store, cents, money, usd_to_coins
-from auction_bot.bot import (AuctionBot, auth_adjustment, pvp_animation_text,
+from auction_bot.bot import (AuctionBot, auth_adjustment, pvp_animation_text, pvp_payouts,
                              signed_owner_message_args, usd_equivalent,
                              UPDATE_CONCURRENCY, WORKER_TICK_INTERVAL_SECONDS)
 
@@ -144,6 +144,18 @@ class PvPStoreTests(unittest.TestCase):
         self.assertIn("40%", text)
         self.assertIn("Winner:", text)
         self.assertIn("Prize: 1000coin", text)
+
+    def test_final_animation_shows_percentage_based_prize_and_refund(self):
+        game = {
+            "status": "finished", "final_percent": 79, "step": 5,
+            "requester_id": 1, "requester_name": "Marcus",
+            "target_id": 2, "target_name": "Osamu", "winner_id": 1,
+            "amount": cents("500"),
+        }
+        self.assertEqual(pvp_payouts(game), (79000, 21000))
+        text = pvp_animation_text(game)
+        self.assertIn("Prize: 790coin", text)
+        self.assertIn("Refund: 210coin", text)
 
     def test_owner_can_credit_or_debit_by_reply_and_by_id(self):
         reply = SimpleNamespace(
