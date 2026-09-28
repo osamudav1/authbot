@@ -1061,7 +1061,11 @@ class AuctionBot:
                 elif action == "pick" and len(parts)==4:
                     game=await self.store_call(self.store.pick_boom,game_id,update.effective_user.id,int(parts[3]))
                     await query.answer("Boom!" if game["status"]=="finished" else "Safe button ပါ။")
-                    await query.edit_message_text(boom_text(game),parse_mode="HTML",reply_markup=None if game["status"]=="finished" else boom_markup(game))
+                    if game["status"] == "finished":
+                        await query.edit_message_text(boom_text(game),parse_mode="HTML")
+                        await query.edit_message_reply_markup(reply_markup=None)
+                    else:
+                        await query.edit_message_text(boom_text(game),parse_mode="HTML",reply_markup=boom_markup(game))
                 else:
                     await query.answer("လုပ်ဆောင်ချက် မမှန်ပါ။",show_alert=True)
             except (RuleError,ValueError) as exc:
