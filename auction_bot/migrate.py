@@ -94,7 +94,10 @@ def main():
             print("Dry run only. Stop the bot, set MONGODB_URI/MONGODB_DATABASE, then rerun with --apply.")
             return
         config=Config.from_env()
-        store=MongoStore(config.mongodb_uri,config.mongodb_database)
+        store=MongoStore(config.mongodb_uri, config.mongodb_database,
+                         config.org_mongo_uri, config.org_mongo_database,
+                         config.org_user_collection, config.org_user_id_field,
+                         config.org_balance_field, config.org_balance_scale)
         import_snapshot(store,snapshot)
         print("Migration committed. Source SQLite file unchanged; wallet holds enabled.")
     except (RuleError,ValueError,sqlite3.Error,PyMongoError) as exc:
