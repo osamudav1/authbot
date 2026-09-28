@@ -460,7 +460,7 @@ class Store:
             loser_id = row["target_id"] if winner_id == row["requester_id"] else row["requester_id"]
             loser_percent = target_percent if winner_id == row["requester_id"] else requester_percent
             pot = row["amount"] * 2
-            loser_payout = 0 if loser_percent > 30 else pot * loser_percent // 100
+            loser_payout = 0 if loser_percent > 25 else pot * loser_percent // 100
             winner_payout = pot - loser_payout
             for user_id in (winner_id, loser_id):
                 if not self.db.execute("SELECT 1 FROM wallets WHERE user_id=?", (user_id,)).fetchone():

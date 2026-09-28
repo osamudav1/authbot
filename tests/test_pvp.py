@@ -66,7 +66,7 @@ class PvPStoreTests(unittest.TestCase):
         self.store.mark_pvp_slot_notified("payout")
         self.assertEqual(self.store.pending_pvp_slot_notifications(), [])
 
-    def test_pvp_payout_uses_redeem_percentage_until_loser_exceeds_30(self):
+    def test_pvp_payout_uses_redeem_percentage_until_loser_exceeds_25(self):
         self.credit(1)
         self.credit(2)
         game = self.request("split", 1, 2)

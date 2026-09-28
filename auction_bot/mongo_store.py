@@ -441,7 +441,7 @@ class MongoStore:
             loser = row["target_id"] if winner == row["requester_id"] else row["requester_id"]
             loser_percent = target_percent if winner == row["requester_id"] else requester_percent
             pot = row["amount"] * 2
-            loser_payout = 0 if loser_percent > 30 else pot * loser_percent // 100
+            loser_payout = 0 if loser_percent > 25 else pot * loser_percent // 100
             winner_payout = pot - loser_payout
             for uid in (winner, loser):
                 if not self.db.wallets.find_one({"_id":uid},session=s):
