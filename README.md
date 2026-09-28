@@ -1,19 +1,19 @@
 # authbid-bot 🎴
 
-Telegram waifu ကဒ်လေလံ bot — owner က ကဒ်တင်၊ user တွေက channel post ရဲ့ Comments ထဲမှာ USD နဲ့ bid ဆွဲနိုင်ပါတယ်။
+Telegram waifu ကဒ်လေလံနှင့် PvP bot — လေလံ bid နှင့် PvP လောင်းကြေးကို coin ဖြင့်သုံးသည်။
 
 ## ပါဝင်သော စနစ်များ
 
-- Owner-only private admin panel၊ လုပ်ဆောင်ချက် **၂၆**။ “owner plan” ကို admin panel လို့ယူဆထားသည်။
+- Owner-only private admin panel၊ လုပ်ဆောင်ချက် **၂၈**။ “owner plan” ကို admin panel လို့ယူဆထားသည်။
 - `/new` → photo → card name → anime name → rarity → starting bid → တင်ပြီးပိတ်မည့် ကြာချိန် (`1sec`, `5min`, `1hours`, `1day`) → preview → Publish။
 - Owner သတ်မှတ်ထားသော channel ထဲ photo post တင်ပေးသည်။
 - အဲဒီ channel နှင့်ချိတ်ထားသော discussion supergroup ရဲ့ auction comments ထဲမှာ `/bid 10.50`။
-- သတ်မှတ်ထားသည့် group တစ်ခုမှာပဲ အလုပ်လုပ်သည်။ အခြား groups ကို မတုံ့ပြန်ပါ။ Non-owner private chats မှာ `/start` welcome နှင့် ကိုယ်ပိုင် account commands ကိုသုံးနိုင်သည်။ Owner admin commands ကို private chat မှာသုံးပါ။ `/auth` ကို owner က သတ်မှတ်ထားသော discussion group မှာလည်း သုံးနိုင်သည်။
+- လေလံအတွက် discussion group နှင့် PvP အတွက် သီးခြား game group သတ်မှတ်နိုင်သည်။ အခြား groups ကို မတုံ့ပြန်ပါ။ PvP group မှာ `/pvp`, `/bal`, `/bcoin` သုံးနိုင်ပြီး `/bcoin` က reply လုပ်ထားသူကို coin gift ပို့သည်။ Non-owner private chats မှာ `/start` welcome နှင့် ကိုယ်ပိုင် account commands ကိုသုံးနိုင်သည်။ Owner admin commands ကို private chat မှာသုံးပါ။ `/auth` ကို owner က သတ်မှတ်ထားသော discussion group မှာလည်း သုံးနိုင်သည်။
 - Bid အသစ်ကို ချက်ချင်းပြင်ပြီး ဆက်တိုက် bids များကို နောက်ဆုံး bid မှ **၂ စက္ကန့်ငြိမ်မှ** channel caption တစ်ခါတည်း ပြင်ပေးသည်။ Telegram rate limit / network error ရှိရင် နောက်ကျနိုင်သည်။ မပြောင်းလဲသည့် post ကို ထပ်မပြင်ပါ။
 - Bid ရောက်လာချိန်အလိုက် database transaction ဖြင့် လက်ခံသည်။ တူညီသည့် bid ပမာဏကို ပြိုင်ဆွဲလျှင် ပထမ commit ဖြစ်သူ အနိုင်ရသည်။
 - End time အတိအကျရောက်လျှင် bid မလက်ခံတော့ပါ။ နောက် worker tick မှာ winner ကို မူရင်း post ထဲပြပေးသည်။ Bid မရှိပါက winner မရှိပါ။
-- MongoDB မှာ auctions၊ bids၊ wallets/holds၊ settings၊ bans နှင့် comment mappings သိမ်းသည်။ Restart ပြီး expired auctions ကို ပိတ်ပေးပြီး caption မပြင်ရသေးတာများ ပြန်လုပ်သည်။
-- USD amount ကို integer cents နဲ့တွက်သည်။ Owner-managed USD wallet ledger ပါသည်။ Payment gateway၊ အလိုအလျောက် bank deposit/withdrawal၊ card ownership transfer နှင့် $20 subscription billing မပါဝင်ပါ။ Owner က ငွေလက်ခံ/ထုတ်ပေးပြီး credit ledger ကိုစီမံရသည်။ Card ကို owner ကပေးပို့ရသည်။
+- MongoDB မှာ auctions၊ bids၊ wallets/holds၊ PvP rounds၊ settings၊ bans နှင့် comment mappings သိမ်းသည်။ Restart ပြီး expired auctions နှင့် PvP animation များကို ဆက်လုပ်သည်။
+- Coin ကို decimal ၂ နေရာအထိ သုံးသည်။ Owner က coin ledger ကို `/auth`, `/credit`, `/debit` ဖြင့်စီမံသည်။ Payment gateway၊ အလိုအလျောက် deposit/withdrawal နှင့် card ownership transfer မပါဝင်ပါ။ Card ကို owner ကပေးပို့ရသည်။
 
 ## Setup
 
@@ -94,13 +94,13 @@ Preview ကိုစစ်ပြီး **Publish** နှိပ်ပါ။ `/dr
 Channel ရဲ့ card post ကိုဖွင့် → **Comments** ကိုဝင် → `/bid 5.00` ပို့ပါ။ Bot က thread မသိနိုင်ပါက auction ရဲ့ forwarded post ကို တိုက်ရိုက် reply လုပ်ပြီး bid ဆွဲပါ။
 
 - ပထမ bid သည် start amount ထက်မနည်းရပါ။ နောက် bid သည် highest bid + increment ထက်မနည်းရပါ။
-- `5`, `5.5`, `5.50` လက်ခံသည်။ `$5`, `1,000`, negative values၊ decimal ၂ နေရာထက်ပိုခြင်းကို လက်မခံပါ။
+- `5`, `5.5`, `5.50` လက်ခံသည်။ `5coin`, `1,000`, negative values၊ decimal ၂ နေရာထက်ပိုခြင်းကို လက်မခံပါ။
 - Bid ကို edit လုပ်ခြင်းက ပမာဏမပြောင်းစေပါ။ ပမာဏအသစ်ဖြင့် `/bid` အသစ်ပို့ပါ။
 - Bid ဖျက်ခြင်း/ပြန်ရုပ်သိမ်းခြင်း မပါ။ Telegram message delete လုပ်လည်း database မှတ်တမ်း မပျက်ပါ။
 - Owner နှင့် user နှစ်မျိုးလုံး ကိုယ်ပိုင် Telegram account ဖြင့် မူရင်း post Comments မှာ bid ဆွဲနိုင်သည်။ Owner ကိုလည်း balance လုံလောက်မှု၊ minimum bid၊ wallet hold နှင့် deadline စည်းမျဉ်းများ အတူတူသတ်မှတ်သည်။ Anonymous admin / channel identity / bot accounts သည် bid မဆွဲနိုင်ပါ။
 - Comment thread ထဲ `/rules` နဲ့ owner သတ်မှတ်ထားသောစည်းကမ်းကို ဖတ်နိုင်သည်။
 
-## Owner panel — လုပ်ဆောင်ချက် ၂၆
+## Owner panel — လုပ်ဆောင်ချက် ၂၈
 
 `/panel` ခလုတ်တွေက ချက်ချင်းလုပ်ဆောင်ပေးခြင်း သို့မဟုတ် လိုအပ်သော command parameters ကိုပြပေးခြင်း ဖြစ်သည်။
 
@@ -127,52 +127,73 @@ Channel ရဲ့ card post ကိုဖွင့် → **Comments** ကို�
 | 19 | `/settings` | Channel/group၊ increment၊ pause နှင့် owner IDs |
 | 20 | `/check` | Telegram linked chats နှင့် admin permissions စစ် |
 | 21 | `/welcome` | User `/start` ပုံ၊ စာ၊ အရောင်ပါ link buttons ပြင် |
-| 22 | `/credit USER_ID amount note` | User wallet credit ထည့် |
-| 23 | `/debit USER_ID amount note` | Available credit နုတ် |
+| 22 | `/credit USER_ID $100 note` သို့ user ကို reply လုပ်ပြီး `+$100` ပို့ | USD ကို coin ပြောင်းထည့်; user bot DM ဖွင့်ထားလျှင် receipt ပို့ |
+| 23 | `/debit USER_ID $10 note` သို့ reply လုပ်ပြီး `-$10` ပို့ | USD ပမာဏအတိုင်း coin နုတ် |
 | 24 | `/wallet USER_ID` | User wallet ကို owner စစ် |
 | 25 | `/walletmode on` / `/walletmode off` | လေလံအသစ်များတွင် wallet လို/မလို သတ်မှတ် |
-| 26 | `/auth` | User ကို reply သို့ numeric ID ဖြင့် $ credit ထည့်/နုတ် |
+| 26 | `/auth` | User ကို reply သို့ numeric ID ဖြင့် USD ပမာဏပေးပြီး coin ပြောင်းထည့်/နုတ် |
+| 27 | `/setpvpgp -100…` | PvP ကစားမည့် supergroup သတ်မှတ်ရန် (owner DM မှသာ) |
+| 28 | `/zip` | Bot source code ZIP ကို owner DM သို့ပို့ရန် |
 
 `/start`, `/help`, `/panel`, `/draftcancel` ကိုလည်းသုံးနိုင်သည်။ ID ဆိုသည်မှာ post ထိပ်က `#1` ကဲ့သို့ auction ID ဖြစ်သည်; command မှာ `1` ဟုသာရေးပါ။
 
-Ban လုပ်ခြင်းသည် ယခင် bids များကို မဖျက်ပါ။ Winner နှင့်ပတ်သက်ပြီး လေလံဖျက်သိမ်းလိုလျှင် active ဖြစ်နေချိန် `/cancelauction` သုံးပါ။ `/close` နှင့် `/cancelauction` ပြီးသော auction ကို ပြန်ဖွင့်ခြင်းမပါ။ Active/publishing auctions ရှိနေစဉ် channel/group ပြောင်းမရပါ။
+Ban လုပ်ခြင်းသည် ယခင် bids များကို မဖျက်ပါ။ Winner နှင့်ပတ်သက်ပြီး လေလံဖျက်သိမ်းလိုလျှင် active ဖြစ်နေချိန် `/cancelauction` သုံးပါ။ `/close` နှင့် `/cancelauction` ပြီးသော auction ကို ပြန်ဖွင့်ခြင်းမပါ။ Active/publishing auctions ရှိနေစဉ် channel/group ပြောင်းမရပါ။ Running/Pending PvP ရှိနေချိန် PvP group ကို မပြောင်းနိုင်ပါ။
+
+## PvP coin game
+
+Owner သည် bot private chat မှ `/setpvpgp -100…` ဖြင့် သီးခြား supergroup သတ်မှတ်ပါ။ Bot ကို အဲဒီ group ထဲထည့်ပါ။ PvP group command menu မှာ `/pvp`, `/bal`, `/bcoin` သုံးခုသာ ပေါ်မည်။ `/bal` သည် ကိုယ့်လက်ကျန်ကိုပြပြီး `/bcoin` ကို PvP game group ထဲမှာသာ coin gift ပို့ရန်သုံးပါ။
+
+ပြိုင်ဘက်၏ group message ကို reply လုပ်ပြီး `/pvp 500` သို့မဟုတ် 500 coin ထက်များသောပမာဏ ပို့ပါ။ Requester မှာ လောင်းကြေးပြည့်ရှိမှ request တင်နိုင်သည်။ ဖိတ်ခေါ်ခံရသူက **Confirm** လုပ်သည့်အချိန်တွင် နှစ်ဖက်စလုံး၏ လက်ကျန်နှင့် game slot ကိုပြန်စစ်ပြီး တစ်ယောက်စီ၏ wager ကိုဖယ်ထားသည်။ ဖိတ်ခေါ်ခံရသူက **Cancel** လုပ်နိုင်ပြီး requester ကလည်း pending request ကို cancel လုပ်နိုင်သည်။
+
+အတည်ပြုပြီးနောက် 50/50 ရလဒ်အတွက် animation bar ကို တစ်စက္ကန့်တစ်ကြိမ်၊ ၅ ကြိမ် update လုပ်သည်။ နောက်ဆုံးမှာ ဥပမာ 60/40 ပြလျှင် 60% ဘက်ကနိုင်သည်။ အနိုင်ရသူကို နှစ်ဖက် wager စုစုပေါင်း ပြန်ပေါင်းပေးပြီး ရှုံးသူ wager ကိုဆုံးရှုံးသည်။ Group တစ်ခုတွင် တစ်ချိန်တည်း running ပွဲ ၅ ပွဲအထိသာ ကစားနိုင်ပြီး user တစ်ယောက်သည် တစ်ပွဲတည်းသာ ဝင်နိုင်သည်။ ပွဲပြီး၍ slot လွတ်တိုင်း `1Round လူရှင်းပါပီ` အသိပေးစာတစ်စောင်ပို့သည်။
+
+PvP game group ထဲမှာသာ အခြား user ရဲ့ message ကို reply လုပ်ပြီး `/bcoin 100` ပို့လျှင် ကိုယ့် available balance မှ 100 coin ကို သူ့ balance ထဲ တစ်ခါတည်းပြောင်းပေးသည်။ ပမာဏသည် coin ဖြစ်ပြီး decimal ၂ နေရာအထိရသည်။ ကိုယ့်ကိုယ်ကို၊ bot ကို၊ anonymous/channel message ကို gift မပို့နိုင်ပါ။ Gift မပို့မီ sender ၏ available coin နှင့် receiver ၏ wallet limit ကိုစစ်သည်; လက်ကျန်စစ်ရန် `/bal` သုံးပါ။
+
+Auction discussion group တွင် `/auther` ပို့လျှင် နောက်ဆုံး auction ပုံအောက်တွင် Inline search ခလုတ်တပ်ပေးသည်။
 
 ## User account / history / wallet
 
-User က bot private chat မှာ `/start` ပို့ပြီး **My account** နှိပ်ပါ။ Owner ပြင်ထားသော welcome link buttons များအောက်မှာ account ခလုတ် သီးသန့်ပါသည်။ `/menu` နဲ့လည်းဖွင့်နိုင်သည်။ Account နှင့် balance/history commands ကို group ထဲမပြပါ။
+User က bot private chat မှာ `/start` ပို့ပြီး **My account** နှိပ်ပါ။ Owner ပြင်ထားသော welcome link buttons များအောက်မှာ account ခလုတ် သီးသန့်ပါသည်။ `/menu` နဲ့လည်းဖွင့်နိုင်သည်။ History နှင့် wallet history commands ကို group ထဲမပြပါ။ PvP game group မှာ `/bal` က လက်ကျန်စစ်ပြီး `/bcoin` က reply လုပ်ထားသူကို coin gift ပို့သည်။
 
 | Command | မြင်ရမည့်အရာ |
 | --- | --- |
 | `/history` | ပါဝင်ခဲ့သော နောက်ဆုံးလေလံ **10 ခု** (လေလံတစ်ခုကိုတစ်ကြိမ်)၊ ကိုယ့်အမြင့်ဆုံး bid၊ နောက်ဆုံး highest bid၊ နိုင်/ရှုံး/ဦးဆောင်/ကျော်ခံရ/ဖျက်သိမ်း အခြေအနေ |
 | `/wins` | ကိုယ်နိုင်ခဲ့သော နောက်ဆုံးကဒ် **10 ခု** နှင့် post links |
 | `/auctions` | Active auctions အရေအတွက်နှင့် Inline search/Back ခလုတ်များ |
-| `/balance` သို့ `/bal` | Available / Held / Total credit နှင့် ကိုယ့် user ID |
-| `/transactions` | ကိုယ့် credit/debit/win ငွေစာရင်း နောက်ဆုံး **10 ခု** |
+| `/balance` သို့ `/bal` (private chat မှာ `/bcoin` လည်း balance alias) | Available / Held / Total coin နှင့် ကိုယ့် user ID |
+| `/transactions` | ကိုယ့် coin အဝင်/အထွက်မှတ်တမ်း နောက်ဆုံး **10 ခု** |
 
 History ကို နောက်ဆုံး bid ပါဝင်ခဲ့သည့်အစီအစဉ်ဖြင့် စီသည်။ Cancelled လေလံကို lost ဟု မတွက်ပါ။ ကိုယ့် user ID ကို Telegram မှစစ်သဖြင့် အခြားသူရဲ့ history/balance ကို parameter ပြောင်းပြီးကြည့်မရပါ။ Private channel links ကိုဖွင့်ရန် channel membership လိုနိုင်သည်။ Wallet history note ရှည်လျှင် preview ကိုသာပြပြီး note အပြည့်ကို database ထဲသိမ်းသည်။
 
-### Owner `/auth` ဖြင့် credit ထည့်/နုတ်ခြင်း
+### Owner USD ထည့်/နုတ်ပြီး coin ပြောင်းခြင်း
 
-**Owner ID စာရင်းထဲရှိသူပဲ သုံးနိုင်သည်** — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ သတ်မှတ်ထားသော discussion group မှာ user ရဲ့ message ကို reply လုပ်ပြီး:
+**Owner ID စာရင်းထဲရှိသူပဲ** `/auth`, `/credit`, `/debit` ကို သုံးနိုင်သည် — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ Owner သတ်မှတ်တဲ့ ပမာဏတွေက USD ဖြစ်ပြီး `$100 = 500 coin` နှုန်းဖြင့် balance ထဲ coin ပြောင်းထည့်/နုတ်ပေးသည်။ ဥပမာ user ၏ message ကို reply လုပ်ပြီး `+100` ပို့လျှင် 500 coin ထည့်ပေးမည်။ ID ဖြင့် သို့မဟုတ် reply ဖြင့် ပြင်နိုင်ပြီး ကိုယ့် message ကို reply လုပ်ခြင်းဖြင့် owner ကိုယ်တိုင်လည်း wallet ပြင်နိုင်သည်။ Positive credit ရလျှင် bot က user ၏ bot DM သို့ USD နဲ့ coin နှစ်မျိုးလုံးပြသော receipt ပို့မည်; DM ကို အရင် `/start` လုပ်ထားရန်လိုနိုင်သည်။ `/auth` သည် သတ်မှတ်ထားသော discussion group မှာလည်း အသုံးပြုနိုင်သည်။ ဥပမာ:
 
 ```text
-/auth + 20
-/auth - 5
-/auth +20.50 deposit confirmed
-/auth -5 correction
+# user message ကို reply လုပ်ပြီး raw amount ပို့ရန်
++100
+-5
+# command နဲ့ reply ပို့ရန်
+/auth +$100
+/auth -$5
+/credit +$100 welcome
+/debit -$5 correction
+# ID ဖြင့်
+/credit 123456789 $100 welcome
+/debit 123456789 $5 correction
 ```
 
 Numeric user ID ဖြင့် owner private chat သို့မဟုတ် သတ်မှတ်ထားသော group မှာ:
 
 ```text
-/auth 123456789 + 20
-/auth 123456789 - 5
-/auth 123456789 +20.50 deposit confirmed
+/auth 123456789 +$100
+/auth 123456789 -$5
+/auth 123456789 +$20.50 deposit confirmed
 ```
 
 `+` ကထည့်၊ `-` ကနုတ် ဖြစ်သည်။ ID ပါသော command သည် ထို ID ကိုပဲပြင်သည်။ ID မပါလျှင် reply လုပ်ထားသော message ရဲ့ **ပို့သူ** ကိုပြင်သည်; forwarded content ရဲ့ original author ကို မရွေးပါ။ Bot/channel/anonymous message ကို reply လုပ်ပြီး credit ထည့်မရပါ။ Owner က ကိုယ့် numeric ID သို့မဟုတ် ကိုယ့် message ကို reply လုပ်၍ ကိုယ့် wallet ကိုလည်း ထည့်/နုတ်နိုင်သည်။ Private chat ထဲ forwarded user message ကိုသုံးမည့်အစား numeric ID ပုံစံကိုသုံးပါ။
 
-- ပမာဏသည် 0 ထက်ကြီးပြီး decimal ၂ နေရာအထိသာ။ Note ကို စာလုံး 200 အထိထည့်နိုင်သည်။
+- Owner ပေးသော USD ပမာဏသည် 0 ထက်ကြီးပြီး decimal ၂ နေရာအထိသာ; လက်ကျန်ကို fixed rate အတိုင်း coin ပြောင်းတွက်သည်။ Note ကို စာလုံး 200 အထိထည့်နိုင်သည်။
 - Available balance ထက်ပိုမနုတ်နိုင်သလို bid အတွက် held ငွေကိုလည်း နုတ်မရပါ။
 - တူညီသော Telegram command update ထပ်ရောက်လျှင် နှစ်ခါမထည့်/မနုတ်ပါ။ Message edit လုပ်လျှင် ငွေမပြောင်းပါ; command အသစ်ပို့ပါ။
 - Group မှာ ပြင်သည့်ပမာဏနဲ့ user ID ကိုအတည်ပြုပေးပြီး user ရဲ့လက်ကျန်အပြည့်ကို မဖော်ပြပါ။
@@ -183,7 +204,7 @@ Numeric user ID ဖြင့် owner private chat သို့မဟုတ် �
 
 **Wallet hold အမြဲဖွင့်ထားသည်။** Bid လက်ခံသည့်အချိန် available balance မှ ယာယီထိန်းထားငွေသို့ ပြောင်းသည်။ ငွေမလုံလောက်လျှင် bid ကိုငြင်းပယ်ပြီး လက်ရှိ winner နှင့် holds မပြောင်းပါ။ `/walletmode off` ဖြင့် ပိတ်၍မရပါ။
 
-Owner က balance ထည့်ပြီး လေလံတင်ရန်:
+Owner က coin ထည့်ပြီး လေလံတင်ရန်:
 
 ```text
 /auth 123456789 + 20.00 deposit confirmed
@@ -191,10 +212,10 @@ Owner က balance ထည့်ပြီး လေလံတင်ရန်:
 /new
 ```
 
-- User balance $20 ရှိပြီး wallet လေလံမှာ $5 bid ဆွဲလျှင် **Available $15 / Held $5 / Total $20** ဖြစ်သည်။
-- အခြားသူကျော်ဆွဲလျှင် မူလ bidder ၏ $5 hold ကိုပြန်လွှတ်သည်။ Cancel လုပ်လျှင်လည်း hold ကိုပြန်လွှတ်သည်။
-- မူလ bidder က $6 ထပ်တင်လျှင် hold စုစုပေါင်း $6 ဖြစ်သည်။ နှစ်ခါပေါင်း $11 မဖြစ်ပါ။
-- $5 နဲ့နိုင်သွားလျှင် wallet ကိုတစ်ကြိမ်သာဖြတ်ပြီး **Available $15 / Held $0 / Total $15** ဖြစ်သည်။
+- User balance 20 coin ရှိပြီး wallet လေလံမှာ 5 coin bid ဆွဲလျှင် **Available 15 / Held 5 / Total 20 coin** ဖြစ်သည်။
+- အခြားသူကျော်ဆွဲလျှင် မူလ bidder ၏ 5 coin hold ကိုပြန်လွှတ်သည်။ Cancel လုပ်လျှင်လည်း hold ကိုပြန်လွှတ်သည်။
+- မူလ bidder က 6 coin ထပ်တင်လျှင် hold စုစုပေါင်း 6 coin ဖြစ်သည်။ နှစ်ခါပေါင်း 11 coin မဖြစ်ပါ။
+- 5 coin နဲ့နိုင်သွားလျှင် wallet ကိုတစ်ကြိမ်သာဖြတ်ပြီး **Available 15 / Held 0 / Total 15 coin** ဖြစ်သည်။
 - လေလံအများကြီးမှာ ဦးဆောင်နေပါက hold အားလုံးကိုပေါင်းပြီး available balance ကိုတွက်သည်။ လက်ကျန်ထက်ပို bid မဆွဲနိုင်ပါ။ Owner က held ငွေကို `/debit` နဲ့နုတ်မရပါ။
 - `/debit 123456789 2.00 correction` ဖြင့် available balance မှနုတ်နိုင်သည်။ Note ကိုစာလုံး 200 အထိရေးနိုင်သည်။
 - လေလံအသစ်တိုင်း wallet လိုအပ်သည်။ MongoDB migration မှာ open legacy auctions ကိုလည်း funded hold ဖြင့် ပြောင်းပေးသည်။ Balance မလုံလောက်သော legacy leader ရှိလျှင် migration ကိုငြင်းပယ်သည်။
@@ -337,9 +358,9 @@ Test URI သည် disposable replica set သာဖြစ်ရမည်။ Prod
 - Owner က `/new` → Publish ကို ထပ်လုပ်ပြီး လေလံအများကြီး တစ်ပြိုင်နက်ဖွင့်နိုင်သည်။ လေလံတစ်ခုစီတွင် သီးခြား ID၊ channel post ID၊ discussion root၊ bids၊ holds နှင့် deadline ရှိသည်။
 - Comment thread နဲ့ reply က မတူသောလေလံကိုညွှန်လျှင် bid ကိုငြင်းပယ်သည်။ မသိသော thread၊ inline/forward မိတ္တူ၊ bot private chat၊ အခြား group နှင့် group ပုံမှန်စာရိုက်နေရာတွင် bid မလက်ခံပါ။ တစ်ခုကိုပိတ်/ဖျက်ခြင်းသည် တခြားလေလံများ၏ bids/holds ကိုမပြောင်းပါ။
 
-Inline မှပို့သောကဒ် caption သည် `🌸 Name`, `📺 Anime`, `💎 ⚜️ Rarity`, `🆔 Auction ID`, `🎴Start Bid - $amount` သာပါသည်။ မူရင်း post Comments link ခလုတ်ကို ဆက်ထားသည်။
+Inline မှပို့သောကဒ် caption သည် `🌸 Name`, `📺 Anime`, `💎 ⚜️ Rarity`, `🆔 Auction ID`, `🎴Start Bid - amount coin` သာပါသည်။ မူရင်း post Comments link ခလုတ်ကို ဆက်ထားသည်။
 
-Default minimum increment is $50.00. The first bid may equal the starting price; subsequent bids must be at least $50 above the current bid (larger increases are accepted). Owner /increment applies to future auctions.
+Default minimum increment is 50.00 coin. The first bid may equal the starting price; subsequent bids must be at least 50 coin above the current bid (larger increases are accepted). Owner /increment applies to future auctions.
 
 Winner notices are sent to the original card's discussion thread, with a linked display name and a View Win Card button. Successful sends are recorded persistently; failed sends retry with backoff. Historical closed auctions are not announced on upgrade. Telegram cannot guarantee exactly-once delivery if a send succeeds but its response or the following database write is lost. The "Payment Deadline: 5 Min" line is display text; wallet settlement still happens at auction close and no additional payment timer is started.
 

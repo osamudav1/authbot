@@ -110,22 +110,23 @@ def active(store, page=0, inline_enabled=True):
 
 def balance(store, user_id):
     row = store.wallet_balance(user_id)
-    return (f'💰 ကိုယ့် Wallet · ID {user_id}\n\n'
-            f'သုံးနိုင်ငွေ: <b>{money(row["available"])}</b>\n\n'
-            f'Bid အတွက်ထိန်းထားငွေ: {money(row["held"])}\n\n'
-            f'စုစုပေါင်း: {money(row["total"])}\n\n'
-            'Deposit/withdrawal အတွက် owner နှင့်ဆက်သွယ်ပါ။')
+    return (f'🪙 ကိုယ့် Coin Wallet · ID {user_id}\n\n'
+            f'သုံးနိုင် coin: <b>{money(row["available"])}</b>\n\n'
+            f'Bid အတွက်ထိန်းထား coin: {money(row["held"])}\n\n'
+            f'စုစုပေါင်း coin: {money(row["total"])}\n\n'
+            'Coin ထည့်/နုတ်ရန် owner နှင့်ဆက်သွယ်ပါ။')
 
 
 def transactions(store, user_id):
     from datetime import datetime, timezone
     rows = store.wallet_history(user_id)
-    lines = ["💳 Wallet transactions · Last 10"]
+    lines = ["🪙 Coin transactions · Last 10"]
     for row in rows:
         sign = "+" if row["delta"]>0 else "−"
         date = datetime.fromtimestamp(row["created"],timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         auction = f' · Auction #{row["auction_id"]}' if row["auction_id"] else ""
-        lines.append(f'\n{sign}{money(abs(row["delta"]))} · {row["kind"]}{auction}\n{date}\n{html.escape(row["note"][:80] + ("…" if len(row["note"])>80 else ""))}')
+        kind = {"gift_sent": "Gift sent", "gift_received": "Gift received"}.get(row["kind"], row["kind"])
+        lines.append(f'\n{sign}{money(abs(row["delta"]))} · {kind}{auction}\n{date}\n{html.escape(row["note"][:80] + ("…" if len(row["note"])>80 else ""))}')
     if not rows:
         lines.append("ငွေစာရင်း မရှိသေးပါ။")
     return "\n".join(lines)

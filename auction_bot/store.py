@@ -10,18 +10,35 @@ class RuleError(ValueError):
     pass
 
 
+MIN_PVP_WAGER = 50_000  # 500 coins, represented as 100 internal subunits per coin.
+USD_TO_COIN_RATE = 5  # $100 = 500 coins.
+
+
 def cents(value):
     if not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,2})?", value):
-        raise RuleError("ပမာဏကို 10 သို့ 10.50 ပုံစံရေးပါ။ $ သင်္ကေတ မထည့်ပါနှင့်။")
+        raise RuleError("Coin ပမာဏကို 10 သို့ 10.50 ပုံစံရေးပါ။ ငွေသင်္ကေတ မထည့်ပါနှင့်။")
     whole, _, fraction = value.partition(".")
     amount = int(whole) * 100 + int(fraction.ljust(2, "0"))
     if amount <= 0:
-        raise RuleError("ပမာဏသည် $0 ထက်များရပါမယ်။")
+        raise RuleError("Coin ပမာဏသည် 0 ထက်များရပါမယ်။")
     return amount
 
 
+def usd_to_coins(value):
+    value = value.strip()
+    if value.startswith("$"):
+        value = value[1:]
+    if not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,2})?", value):
+        raise RuleError("USD ပမာဏကို 100 သို့ $100.50 ပုံစံရေးပါ။")
+    whole, _, fraction = value.partition(".")
+    usd_subunits = int(whole) * 100 + int(fraction.ljust(2, "0"))
+    if usd_subunits <= 0:
+        raise RuleError("USD ပမာဏသည် 0 ထက်များရပါမယ်။")
+    return usd_subunits * USD_TO_COIN_RATE
+
+
 def money(amount):
-    return f"${amount // 100:,}.{amount % 100:02d}"
+    return f"{amount // 100:,}.{amount % 100:02d} coin"
 
 
 class Store:
@@ -66,6 +83,17 @@ class Store:
           chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
           auction_id INTEGER NOT NULL REFERENCES auctions(id),
           PRIMARY KEY(chat_id, message_id));
+        CREATE TABLE IF NOT EXISTS pvp_games(
+          id TEXT PRIMARY KEY, group_id INTEGER NOT NULL,
+          requester_id INTEGER NOT NULL, requester_name TEXT NOT NULL,
+          target_id INTEGER NOT NULL, target_name TEXT NOT NULL,
+          amount INTEGER NOT NULL CHECK(amount>0), status TEXT NOT NULL,
+          message_id INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL,
+          next_at INTEGER, step INTEGER NOT NULL DEFAULT 0,
+          final_percent INTEGER, winner_id INTEGER,
+          slot_notified INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS pvp_games_by_group_status ON pvp_games(group_id,status,next_at);
+        CREATE INDEX IF NOT EXISTS pvp_games_by_players_status ON pvp_games(status,requester_id,target_id);
         """)
         # Nullable column preserves deadlines of auctions created by older versions.
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(auctions)")}
@@ -99,11 +127,22 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, str(value)))
 
     def target(self, key, value):
+        if key == "group_id" and str(value) == self.get("pvp_group_id"):
+            raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
         if self.get(key) == str(value):
             return
         if self.db.execute("SELECT 1 FROM auctions WHERE status IN ('active','publishing') LIMIT 1").fetchone():
             raise RuleError("Channel/group ပြောင်းမယ်ဆို active/publishing လေလံတွေကို အရင်ပိတ်ပါ။")
         self.set(key, value)
+
+    def set_pvp_group(self, group_id):
+        with self.transaction():
+            if str(group_id) == self.get("group_id"):
+                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
+            if str(group_id) != self.get("pvp_group_id") and self.db.execute(
+                    "SELECT 1 FROM pvp_games WHERE status IN ('pending','running') LIMIT 1").fetchone():
+                raise RuleError("PvP group ပြောင်းရန် pending/running ပွဲများကို အရင်ရှင်းပါ။")
+            self.set("pvp_group_id", group_id)
 
     def auction(self, auction_id):
         row = self.db.execute("SELECT * FROM auctions WHERE id=?", (auction_id,)).fetchone()
@@ -323,6 +362,149 @@ class Store:
 
     def wallet_history(self, user_id):
         return [dict(row) for row in self.db.execute("SELECT * FROM wallet_events WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,))]
+
+    def transfer_coins(self, group_id, sender_id, recipient_id, amount, event_key):
+        if (type(sender_id) is not int or type(recipient_id) is not int
+                or not 0 < sender_id < 2**63 or not 0 < recipient_id < 2**63
+                or sender_id == recipient_id or type(amount) is not int
+                or not 0 < amount <= 99999999999 or not event_key):
+            raise RuleError("Coin gift ပမာဏ သို့မဟုတ် user ID မမှန်ပါ။")
+        sent_key, received_key = f"{event_key}:sent", f"{event_key}:received"
+        with self.transaction():
+            if str(group_id) != self.get("pvp_group_id"):
+                raise RuleError("Coin gift ကို သတ်မှတ်ထားတဲ့ PvP game group မှာပဲ ပို့နိုင်ပါတယ်။")
+            rows = self.db.execute(
+                "SELECT event_key,user_id,delta,actor_id FROM wallet_events WHERE event_key IN (?,?)",
+                (sent_key, received_key)).fetchall()
+            if rows:
+                existing = {row["event_key"]: (row["user_id"],row["delta"],row["actor_id"]) for row in rows}
+                expected = {sent_key: (sender_id,-amount,sender_id),
+                            received_key: (recipient_id,amount,sender_id)}
+                if existing == expected:
+                    return False
+                raise RuleError("ဒီ gift request ကို ပြင်ပြီးပြန်သုံးလို့မရပါ။")
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (sender_id,))
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (recipient_id,))
+            sender = self.wallet_balance(sender_id)
+            if sender["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(sender['available'])} ပါ။")
+            recipient = self.wallet_balance(recipient_id)
+            if recipient["total"] + amount > 99999999999:
+                raise RuleError("လက်ခံသူ၏ wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            self.db.execute("UPDATE wallets SET balance=balance-? WHERE user_id=?", (amount,sender_id))
+            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (amount,recipient_id))
+            created = int(time.time())
+            self.db.execute("""INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created)
+              VALUES (?,?, 'gift_sent', ?,?,?,?)""",
+              (sender_id,-amount,f"Gift to user {recipient_id}",sender_id,sent_key,created))
+            self.db.execute("""INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created)
+              VALUES (?,?, 'gift_received', ?,?,?,?)""",
+              (recipient_id,amount,f"Gift from user {sender_id}",sender_id,received_key,created))
+            return True
+
+    def _pvp_game(self, game_id):
+        row = self.db.execute("SELECT * FROM pvp_games WHERE id=?", (game_id,)).fetchone()
+        if not row:
+            raise RuleError("PvP request မတွေ့ပါ။")
+        return dict(row)
+
+    def create_pvp(self, game_id, group_id, requester_id, requester_name,
+                   target_id, target_name, amount, now=None):
+        now = int(time.time()) if now is None else int(now)
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 500 coin ဖြစ်ရပါမယ်။")
+        if requester_id == target_id:
+            raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
+        with self.transaction():
+            if str(group_id) != self.get("pvp_group_id"):
+                raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (group_id,)).fetchone()[0] >= 5:
+                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ပွဲအသစ်တောင်းနိုင်ပါတယ်။")
+            for user_id in (requester_id, target_id):
+                if self.db.execute("SELECT 1 FROM pvp_games WHERE group_id=? AND status='running' AND (requester_id=? OR target_id=?) LIMIT 1", (group_id,user_id,user_id)).fetchone():
+                    raise RuleError("This User Playing")
+            if self.db.execute("SELECT 1 FROM pvp_games WHERE status='pending' AND requester_id=? LIMIT 1", (requester_id,)).fetchone():
+                raise RuleError("သင့်မှာ အဖြေမရသေးတဲ့ PvP request ရှိပါတယ်။")
+            balance = self.wallet_balance(requester_id)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            self.db.execute("INSERT INTO pvp_games(id,group_id,requester_id,requester_name,target_id,target_name,amount,status,created) VALUES (?,?,?,?,?,?,?,'pending',?)",
+                            (game_id,group_id,requester_id,requester_name[:64],target_id,target_name[:64],amount,now))
+            return self._pvp_game(game_id)
+
+    def set_pvp_message(self, game_id, message_id):
+        self.db.execute("UPDATE pvp_games SET message_id=? WHERE id=? AND status='pending'", (message_id,game_id))
+
+    def cancel_pvp(self, game_id, actor_id):
+        with self.transaction():
+            row = self._pvp_game(game_id)
+            if actor_id not in (row["requester_id"],row["target_id"]):
+                raise RuleError("ဒီ PvP request ကို cancel လုပ်ခွင့်မရှိပါ။")
+            if row["status"] != "pending":
+                raise RuleError("ဒီ PvP request ကို ယခု cancel မလုပ်နိုင်ပါ။")
+            self.db.execute("UPDATE pvp_games SET status='cancelled' WHERE id=?", (game_id,))
+            return self._pvp_game(game_id)
+
+    def accept_pvp(self, game_id, actor_id, final_percent, now=None):
+        now = time.time() if now is None else now
+        if type(final_percent) is not int or not 1 <= final_percent <= 100:
+            raise RuleError("PvP result မမှန်ပါ။")
+        with self.transaction():
+            row = self._pvp_game(game_id)
+            if actor_id != row["target_id"]:
+                raise RuleError("Request လက်ခံနိုင်သူက ဖိတ်ခေါ်ခံရသူတစ်ဦးတည်းပါ။")
+            if row["status"] != "pending":
+                raise RuleError("ဒီ PvP request ကို အရင်ဖြေပြီးပါပြီ။")
+            if str(row["group_id"]) != self.get("pvp_group_id"):
+                raise RuleError("ဒီ group မှာ PvP မကစားနိုင်တော့ပါ။")
+            active = self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (row["group_id"],)).fetchone()[0]
+            if active >= 5:
+                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
+            for user_id in (row["requester_id"],row["target_id"]):
+                if self.db.execute("SELECT 1 FROM pvp_games WHERE group_id=? AND status='running' AND (requester_id=? OR target_id=?) LIMIT 1", (row["group_id"],user_id,user_id)).fetchone():
+                    raise RuleError("This User Playing")
+                balance = self.wallet_balance(user_id)
+                if balance["available"] < row["amount"]:
+                    raise RuleError(f"User {user_id} မှာ လိုအပ်တဲ့ coin မလုံလောက်ပါ။")
+                if balance["total"] + row["amount"] > 99999999999:
+                    raise RuleError("လောင်းကြေးအနိုင်ရလျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            for user_id in (row["requester_id"],row["target_id"]):
+                self.db.execute("UPDATE wallets SET balance=balance-? WHERE user_id=?", (row["amount"],user_id))
+                self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,'pvp_stake',?,?,?,?)",
+                                (user_id,-row["amount"],f"PvP stake · {game_id}",actor_id,f"pvp:{game_id}:stake:{user_id}",now))
+            self.db.execute("UPDATE pvp_games SET status='running',next_at=?,step=0,final_percent=? WHERE id=?", (now+1,final_percent,game_id))
+            return self._pvp_game(game_id)
+
+    def due_pvp(self, now=None):
+        now = time.time() if now is None else now
+        return [dict(r) for r in self.db.execute("SELECT * FROM pvp_games WHERE status='running' AND next_at<=? ORDER BY next_at,id", (now,))]
+
+    def advance_pvp(self, game_id, now=None):
+        now = time.time() if now is None else now
+        with self.transaction():
+            row = self._pvp_game(game_id)
+            if row["status"] != "running" or row["next_at"] is None or row["next_at"] > now:
+                return row
+            step = row["step"] + 1
+            if step < 5:
+                self.db.execute("UPDATE pvp_games SET step=?,next_at=? WHERE id=? AND status='running'", (step,now+1,game_id))
+                return self._pvp_game(game_id)
+            winner_id = row["requester_id"] if row["final_percent"] > 50 else row["target_id"]
+            prize = row["amount"] * 2
+            wallet = self.db.execute("SELECT balance FROM wallets WHERE user_id=?", (winner_id,)).fetchone()
+            if not wallet:
+                raise RuleError("Winner wallet မတွေ့ပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
+            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (prize,winner_id))
+            self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,'pvp_win',?,?,?,?)",
+                            (winner_id,prize,f"PvP prize · {game_id}",None,f"pvp:{game_id}:prize",now))
+            self.db.execute("UPDATE pvp_games SET status='finished',winner_id=?,step=5,next_at=NULL WHERE id=?", (winner_id,game_id))
+            return self._pvp_game(game_id)
+
+    def pending_pvp_slot_notifications(self):
+        return [dict(r) for r in self.db.execute("SELECT * FROM pvp_games WHERE status='finished' AND slot_notified=0 ORDER BY created,id")]
+
+    def mark_pvp_slot_notified(self, game_id):
+        self.db.execute("UPDATE pvp_games SET slot_notified=1 WHERE id=? AND status='finished'", (game_id,))
 
     def close(self):
         self.db.close()
