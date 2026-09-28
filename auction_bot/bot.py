@@ -475,7 +475,10 @@ class AuctionBot:
                     if not update.effective_user or update.effective_user.is_bot:
                         return
                     row = await self.store_call(self.store.wallet_balance, update.effective_user.id)
-                    await message.reply_text(f"🪙 Coin balance\n\nAvailable: {money(row['available'])}")
+                    text = f"🪙 Coin balance\n\nAvailable: {money(row['available'])}"
+                    if row["available"] == 0:
+                        text += "\nမွဲပြီလေ🤣"
+                    await message.reply_text(text)
                 elif command == "bcoin":
                     await self.pvp_gift_command(args, message, update.effective_user)
                 return
