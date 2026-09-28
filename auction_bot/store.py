@@ -11,6 +11,7 @@ class RuleError(ValueError):
 
 
 MIN_PVP_WAGER = 50_000  # 500 coins, represented as 100 internal subunits per coin.
+USD_TO_COIN_RATE = 5  # $100 = 500 coins.
 
 
 def cents(value):
@@ -21,6 +22,19 @@ def cents(value):
     if amount <= 0:
         raise RuleError("Coin ပမာဏသည် 0 ထက်များရပါမယ်။")
     return amount
+
+
+def usd_to_coins(value):
+    value = value.strip()
+    if value.startswith("$"):
+        value = value[1:]
+    if not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,2})?", value):
+        raise RuleError("USD ပမာဏကို 100 သို့ $100.50 ပုံစံရေးပါ။")
+    whole, _, fraction = value.partition(".")
+    usd_subunits = int(whole) * 100 + int(fraction.ljust(2, "0"))
+    if usd_subunits <= 0:
+        raise RuleError("USD ပမာဏသည် 0 ထက်များရပါမယ်။")
+    return usd_subunits * USD_TO_COIN_RATE
 
 
 def money(amount):

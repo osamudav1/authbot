@@ -4,8 +4,9 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from auction_bot.store import RuleError, Store, cents, money
-from auction_bot.bot import AuctionBot, auth_adjustment, pvp_animation_text
+from auction_bot.store import RuleError, Store, cents, money, usd_to_coins
+from auction_bot.bot import (AuctionBot, auth_adjustment, pvp_animation_text,
+                             signed_owner_message_args, usd_equivalent)
 
 
 class PvPStoreTests(unittest.TestCase):
@@ -99,14 +100,21 @@ class PvPStoreTests(unittest.TestCase):
         )
         message = SimpleNamespace(reply_to_message=reply)
         owner_bot = object.__new__(AuctionBot)
-        self.assertEqual(auth_adjustment(["+", "500", "gift"], message),
+        self.assertEqual(auth_adjustment(["+", "$100", "gift"], message),
                          (77, cents("500"), "gift"))
-        self.assertEqual(auth_adjustment(["-5"], message),
-                         (77, -cents("5"), ""))
-        self.assertEqual(owner_bot.owner_wallet_adjustment("credit", ["77", "500", "gift"], message),
+        self.assertEqual(auth_adjustment(["-$5"], message),
+                         (77, -cents("25"), ""))
+        self.assertEqual(owner_bot.owner_wallet_adjustment("credit", ["77", "$100", "gift"], message),
                          (77, cents("500"), "gift"))
-        self.assertEqual(owner_bot.owner_wallet_adjustment("debit", ["-5"], message),
-                         (77, -cents("5"), ""))
+        self.assertEqual(owner_bot.owner_wallet_adjustment("debit", ["-$5"], message),
+                         (77, -cents("25"), ""))
+
+    def test_raw_reply_plus_100_converts_at_rate_100_usd_to_500_coins(self):
+        self.assertEqual(usd_to_coins("$100"), cents("500"))
+        self.assertEqual(usd_to_coins("100.50"), cents("502.50"))
+        self.assertEqual(signed_owner_message_args("+100"), ["+100"])
+        self.assertEqual(signed_owner_message_args("-$5 correction"), ["-$5", "correction"])
+        self.assertEqual(usd_equivalent(cents("500")), "$100.00")
 
     def test_button_cooldown_is_two_seconds(self):
         owner_bot = object.__new__(AuctionBot)
@@ -135,6 +143,7 @@ class PvPStoreTests(unittest.TestCase):
             fake, 77, cents("500"), cents("600")))
         self.assertTrue(delivered)
         self.assertEqual(fake.sent[0]["chat_id"], 77)
+        self.assertIn("USD $100.00", fake.sent[0]["text"])
         self.assertIn("500.00 coin", fake.sent[0]["text"])
         self.assertIn("600.00 coin", fake.sent[0]["text"])
 

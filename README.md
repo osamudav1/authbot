@@ -127,11 +127,11 @@ Channel ရဲ့ card post ကိုဖွင့် → **Comments** ကို�
 | 19 | `/settings` | Channel/group၊ increment၊ pause နှင့် owner IDs |
 | 20 | `/check` | Telegram linked chats နှင့် admin permissions စစ် |
 | 21 | `/welcome` | User `/start` ပုံ၊ စာ၊ အရောင်ပါ link buttons ပြင် |
-| 22 | `/credit USER_ID amount note` သို့ user ကို reply လုပ်ပြီး `/credit + amount note` | Coin ထည့်; user bot DM ဖွင့်ထားလျှင် receipt ပို့ |
-| 23 | `/debit USER_ID amount note` သို့ reply လုပ်ပြီး `/debit - amount note` | Available coin နုတ် |
+| 22 | `/credit USER_ID $100 note` သို့ user ကို reply လုပ်ပြီး `+$100` ပို့ | USD ကို coin ပြောင်းထည့်; user bot DM ဖွင့်ထားလျှင် receipt ပို့ |
+| 23 | `/debit USER_ID $10 note` သို့ reply လုပ်ပြီး `-$10` ပို့ | USD ပမာဏအတိုင်း coin နုတ် |
 | 24 | `/wallet USER_ID` | User wallet ကို owner စစ် |
 | 25 | `/walletmode on` / `/walletmode off` | လေလံအသစ်များတွင် wallet လို/မလို သတ်မှတ် |
-| 26 | `/auth` | User ကို reply သို့ numeric ID ဖြင့် coin ထည့်/နုတ် |
+| 26 | `/auth` | User ကို reply သို့ numeric ID ဖြင့် USD ပမာဏပေးပြီး coin ပြောင်းထည့်/နုတ် |
 | 27 | `/setpvpgp -100…` | PvP ကစားမည့် supergroup သတ်မှတ်ရန် (owner DM မှသာ) |
 | 28 | `/zip` | Bot source code ZIP ကို owner DM သို့ပို့ရန် |
 
@@ -163,34 +163,35 @@ User က bot private chat မှာ `/start` ပို့ပြီး **My accou
 
 History ကို နောက်ဆုံး bid ပါဝင်ခဲ့သည့်အစီအစဉ်ဖြင့် စီသည်။ Cancelled လေလံကို lost ဟု မတွက်ပါ။ ကိုယ့် user ID ကို Telegram မှစစ်သဖြင့် အခြားသူရဲ့ history/balance ကို parameter ပြောင်းပြီးကြည့်မရပါ။ Private channel links ကိုဖွင့်ရန် channel membership လိုနိုင်သည်။ Wallet history note ရှည်လျှင် preview ကိုသာပြပြီး note အပြည့်ကို database ထဲသိမ်းသည်။
 
-### Owner `/auth` ဖြင့် coin ထည့်/နုတ်ခြင်း
+### Owner USD ထည့်/နုတ်ပြီး coin ပြောင်းခြင်း
 
-**Owner ID စာရင်းထဲရှိသူပဲ** `/auth`, `/credit`, `/debit` ကို သုံးနိုင်သည် — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ ID ဖြင့် သို့မဟုတ် user ၏ message ကို reply လုပ်ပြီး coin ထည့်/နုတ်နိုင်သည်။ ကိုယ့် message ကို reply လုပ်ခြင်းဖြင့် owner ကိုယ်တိုင်လည်း wallet ပြင်နိုင်သည်။ Positive coin credit ရလျှင် bot က user ၏ bot DM သို့ receipt ပို့မည်; DM ကို အရင် `/start` လုပ်ထားရန်လိုနိုင်သည်။ `/auth` သည် သတ်မှတ်ထားသော discussion group မှာလည်း အသုံးပြုနိုင်သည်။ ဥပမာ:
+**Owner ID စာရင်းထဲရှိသူပဲ** `/auth`, `/credit`, `/debit` ကို သုံးနိုင်သည် — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ Owner သတ်မှတ်တဲ့ ပမာဏတွေက USD ဖြစ်ပြီး `$100 = 500 coin` နှုန်းဖြင့် balance ထဲ coin ပြောင်းထည့်/နုတ်ပေးသည်။ ဥပမာ user ၏ message ကို reply လုပ်ပြီး `+100` ပို့လျှင် 500 coin ထည့်ပေးမည်။ ID ဖြင့် သို့မဟုတ် reply ဖြင့် ပြင်နိုင်ပြီး ကိုယ့် message ကို reply လုပ်ခြင်းဖြင့် owner ကိုယ်တိုင်လည်း wallet ပြင်နိုင်သည်။ Positive credit ရလျှင် bot က user ၏ bot DM သို့ USD နဲ့ coin နှစ်မျိုးလုံးပြသော receipt ပို့မည်; DM ကို အရင် `/start` လုပ်ထားရန်လိုနိုင်သည်။ `/auth` သည် သတ်မှတ်ထားသော discussion group မှာလည်း အသုံးပြုနိုင်သည်။ ဥပမာ:
 
 ```text
-/auth + 20
-/auth - 5
-/auth +20.50 deposit confirmed
-/auth -5 correction
-# user message ကို reply လုပ်ပြီး
-/credit + 500 welcome
-/debit - 5 correction
+# user message ကို reply လုပ်ပြီး raw amount ပို့ရန်
++100
+-5
+# command နဲ့ reply ပို့ရန်
+/auth +$100
+/auth -$5
+/credit +$100 welcome
+/debit -$5 correction
 # ID ဖြင့်
-/credit 123456789 500 welcome
-/debit 123456789 5 correction
+/credit 123456789 $100 welcome
+/debit 123456789 $5 correction
 ```
 
 Numeric user ID ဖြင့် owner private chat သို့မဟုတ် သတ်မှတ်ထားသော group မှာ:
 
 ```text
-/auth 123456789 + 20
-/auth 123456789 - 5
-/auth 123456789 +20.50 deposit confirmed
+/auth 123456789 +$100
+/auth 123456789 -$5
+/auth 123456789 +$20.50 deposit confirmed
 ```
 
 `+` ကထည့်၊ `-` ကနုတ် ဖြစ်သည်။ ID ပါသော command သည် ထို ID ကိုပဲပြင်သည်။ ID မပါလျှင် reply လုပ်ထားသော message ရဲ့ **ပို့သူ** ကိုပြင်သည်; forwarded content ရဲ့ original author ကို မရွေးပါ။ Bot/channel/anonymous message ကို reply လုပ်ပြီး credit ထည့်မရပါ။ Owner က ကိုယ့် numeric ID သို့မဟုတ် ကိုယ့် message ကို reply လုပ်၍ ကိုယ့် wallet ကိုလည်း ထည့်/နုတ်နိုင်သည်။ Private chat ထဲ forwarded user message ကိုသုံးမည့်အစား numeric ID ပုံစံကိုသုံးပါ။
 
-- ပမာဏသည် 0 coin ထက်ကြီးပြီး decimal ၂ နေရာအထိသာ။ Note ကို စာလုံး 200 အထိထည့်နိုင်သည်။
+- Owner ပေးသော USD ပမာဏသည် 0 ထက်ကြီးပြီး decimal ၂ နေရာအထိသာ; လက်ကျန်ကို fixed rate အတိုင်း coin ပြောင်းတွက်သည်။ Note ကို စာလုံး 200 အထိထည့်နိုင်သည်။
 - Available balance ထက်ပိုမနုတ်နိုင်သလို bid အတွက် held ငွေကိုလည်း နုတ်မရပါ။
 - တူညီသော Telegram command update ထပ်ရောက်လျှင် နှစ်ခါမထည့်/မနုတ်ပါ။ Message edit လုပ်လျှင် ငွေမပြောင်းပါ; command အသစ်ပို့ပါ။
 - Group မှာ ပြင်သည့်ပမာဏနဲ့ user ID ကိုအတည်ပြုပေးပြီး user ရဲ့လက်ကျန်အပြည့်ကို မဖော်ပြပါ။

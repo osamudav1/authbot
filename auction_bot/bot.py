@@ -18,7 +18,7 @@ from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, 
 from . import account, welcome
 from .config import Config
 from .source_export import source_zip
-from .store import MIN_PVP_WAGER, RuleError, Store, cents, money
+from .store import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, Store, cents, money, usd_to_coins
 from .mongo_store import MongoStore
 from pymongo.errors import PyMongoError
 
@@ -47,9 +47,9 @@ OWNER_ACTIONS = {
     "settings": "လက်ရှိ settings",
     "check": "Channel/group ချိတ်ဆက်မှုစစ်ရန်",
     "welcome": "User /start ပုံ၊ စာ၊ buttons ပြင်ရန်",
-    "auth": "Coin reply: /auth + 20 သို့ /auth - 5 | ID: /auth USER_ID + 20",
-    "credit": "Coin ပြင်ရန်: /credit USER_ID 10.00 note သို့ user ကို reply လုပ်ပြီး /credit + 10.00 note",
-    "debit": "Coin ပြင်ရန်: /debit USER_ID 10.00 note သို့ user ကို reply လုပ်ပြီး /debit - 10.00 note",
+    "auth": "Reply user message ဖြင့် +100/-100 ပို့ပါ (USD) သို့ /auth +$100 | ID: /auth USER_ID +$100",
+    "credit": "USD credit: /credit USER_ID $100 note သို့ reply /credit +$100 note",
+    "debit": "USD debit: /debit USER_ID $10 note သို့ reply /debit -$10 note",
     "wallet": "User coin wallet စစ်ရန်: /wallet USER_ID",
     "walletmode": "Bid ငွေကို ယာယီထိန်းထားရန်: /walletmode on",
     "setpvpgp": "PvP ကစားမည့် group သတ်မှတ်ရန်: /setpvpgp -100…",
@@ -90,7 +90,7 @@ PROMPTS = {
 STEPS = list(PROMPTS)
 
 
-AUTH_USAGE = "User message ကို reply လုပ်ပြီး /auth + 20 သို့ /auth - 5 ရေးပါ။ ID ဖြင့် /auth USER_ID + 20 သို့ /auth USER_ID - 5 ရေးနိုင်ပါတယ်။"
+AUTH_USAGE = "USD ကို coin အဖြစ်ပြောင်းရန် user message ကို reply လုပ်ပြီး /auth +$100 သို့ /auth -$5 ရေးပါ။ ID ဖြင့် /auth USER_ID +$100 သို့ /auth USER_ID -$5 ရေးနိုင်ပါတယ်။ Rate: $100 = 500 coin."
 
 
 def auth_adjustment(args, message):
@@ -118,8 +118,15 @@ def auth_adjustment(args, message):
         sign, value, note = parts[0][0], parts[0][1:], " ".join(parts[1:])
     else:
         raise RuleError(AUTH_USAGE)
-    amount = cents(value)
+    amount = usd_to_coins(value)
     return user_id, amount if sign=="+" else -amount, note
+
+
+def signed_owner_message_args(text):
+    match = re.fullmatch(r"([+-])\s*(\$?[0-9]{1,9}(?:\.[0-9]{1,2})?)(?:\s+(.+))?", text.strip())
+    if not match:
+        return None
+    return [match.group(1) + match.group(2)] + (match.group(3).split() if match.group(3) else [])
 
 
 def duration_seconds(value):
@@ -155,6 +162,11 @@ def date_text(value):
 
 def pvp_name(user_id, name):
     return f'<a href="tg://user?id={user_id}">{html.escape(name or "Player")}</a>'
+
+
+def usd_equivalent(coin_subunits):
+    usd_subunits = coin_subunits // USD_TO_COIN_RATE
+    return f"${usd_subunits // 100:,}.{usd_subunits % 100:02d}"
 
 
 def pvp_animation_text(game):
@@ -392,6 +404,14 @@ class AuctionBot:
                 if update.effective_user and update.effective_user.id in self.config.owners and (self.owner(update) or self.group(update)):
                     await self.auth_command(args, message, update.effective_user.id, context.bot)
                 return
+            if (is_owner and not command and message.reply_to_message
+                    and (self.owner(update) or self.group(update))
+                    and not context.user_data.get("draft")
+                    and not context.user_data.get("welcome_edit")):
+                signed_args = signed_owner_message_args(text)
+                if signed_args:
+                    await self.auth_command(signed_args, message, update.effective_user.id, context.bot)
+                    return
             if self.owner(update):
                 if context.user_data.get("welcome_edit") and command not in set(OWNER_ACTIONS) | {"welcomecancel", "welcomehelp", "panel", "start", "help", "draftcancel"}:
                     await self.welcome_input(message, update.effective_user, context)
@@ -465,7 +485,7 @@ class AuctionBot:
     async def wallet_credit_notification(self, bot, user_id, delta, available):
         if delta <= 0:
             return True
-        text = f"🪙 သင့် account ထဲ {money(delta)} ဝင်လာပါတယ်။\nလက်ရှိသုံးနိုင် coin: {money(available)}"
+        text = f"🪙 USD {usd_equivalent(delta)} ကနေ {money(delta)} ပြောင်းထည့်ပေးထားပါတယ်။\nလက်ရှိသုံးနိုင် coin: {money(available)}"
         try:
             await bot.send_message(chat_id=user_id, text=text)
         except TelegramError:
@@ -480,7 +500,7 @@ class AuctionBot:
         notified = await self.wallet_credit_notification(bot, user_id, delta, available) if changed else True
         if changed:
             operation = "ထည့်" if delta>0 else "နုတ်"
-            text = f"✅ User {user_id} ကို {money(abs(delta))} {operation}ပြီးပါပြီ။"
+            text = f"✅ User {user_id} အတွက် USD {usd_equivalent(abs(delta))} ({money(abs(delta))}) {operation}ပြီးပါပြီ။"
             if not notified:
                 text += "\n⚠️ User ကို DM မပို့နိုင်ပါ။ သူ့ bot DM မှာ /start လုပ်ထားကြောင်းစစ်ပါ။"
         else:
@@ -495,7 +515,7 @@ class AuctionBot:
             raise RuleError(OWNER_ACTIONS[command])
         if args and re.fullmatch(r"[0-9]{1,19}", args[0]) and len(args) >= 2 and not args[1].startswith(("+", "-")):
             user_id = int(args[0])
-            amount = cents(args[1])
+            amount = usd_to_coins(args[1])
             delta = amount if command == "credit" else -amount
             return user_id, delta, " ".join(args[2:])
         return auth_adjustment(args, message)
@@ -623,7 +643,7 @@ class AuctionBot:
             changed = self.store.adjust_wallet(user_id, delta,
                 message.from_user.id, f"owner:{message.chat_id}:{message.message_id}", note)
             available = self.store.wallet_balance(user_id)["available"]
-            result = ("✅ ပြင်ပြီးပါပြီ။" if changed else "ဒီ request ကို အရင်က လုပ်ပြီးပါပြီ။") + f" User {user_id} · Available {money(available)}"
+            result = ("✅ ပြင်ပြီးပါပြီ။" if changed else "ဒီ request ကို အရင်က လုပ်ပြီးပါပြီ။") + f" User {user_id} · USD {usd_equivalent(abs(delta))} → {money(abs(delta))} · Available {money(available)}"
             if changed and delta > 0:
                 notified = await self.wallet_credit_notification(context.bot, user_id, delta, available)
                 if not notified:
@@ -687,7 +707,7 @@ class AuctionBot:
                 self.store.set("rules", value)
             result = self.store.get("rules")
         elif command == "settings":
-            result = f'Wallet for new auctions: {"ON" if self.store.get("wallet_mode")=="1" else "OFF"}\nChannel: {self.store.get("channel_id") or "မသတ်မှတ်ရသေး"}\nAuction group: {self.store.get("group_id") or "မသတ်မှတ်ရသေး"}\nPvP group: {self.store.get("pvp_group_id") or "မသတ်မှတ်ရသေး"}\nIncrement: {money(int(self.store.get("increment")))}\nPaused: {self.store.get("paused")}\nCurrency: Coin\nBid edits: immediate; bursts wait for 2 quiet seconds\nOwners: {", ".join(map(str, sorted(self.config.owners)))}'
+            result = f'Wallet for new auctions: {"ON" if self.store.get("wallet_mode")=="1" else "OFF"}\nChannel: {self.store.get("channel_id") or "မသတ်မှတ်ရသေး"}\nAuction group: {self.store.get("group_id") or "မသတ်မှတ်ရသေး"}\nPvP group: {self.store.get("pvp_group_id") or "မသတ်မှတ်ရသေး"}\nIncrement: {money(int(self.store.get("increment")))}\nPaused: {self.store.get("paused")}\nCurrency: Coin · Owner USD rate: $100 = 500 coin\nBid edits: immediate; bursts wait for 2 quiet seconds\nOwners: {", ".join(map(str, sorted(self.config.owners)))}'
         elif command == "auctions":
             result = "နောက်ဆုံး လေလံ 30:\n" + ("\n".join(f'#{r["id"]} {r["status"]} • {r["name"]}' for r in self.store.listing()) or "မရှိသေးပါ။")
         elif command == "view":
