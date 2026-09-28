@@ -180,13 +180,10 @@ def pvp_animation_text(game):
         shown = 50 if game["status"] == "pending" else first
     else:
         step = game["step"]
-        progress = step / 5
-        base = 50 + (first - 50) * progress
-        # Keep the suspense repeatable after restarts while allowing the odds to
-        # move slightly up and down instead of revealing a straight line.
+        # Keep the suspense repeatable after restarts while allowing either side
+        # to jump from a slim chance to a dominant-looking lead between rounds.
         digest = hashlib.sha256(f'{game["id"]}:{step}'.encode()).digest()
-        jitter = (digest[0] % 25) - 12
-        shown = round(max(1, min(99, base + jitter * (1 - progress))))
+        shown = 10 + (digest[0] % 81)
     second = 100 - shown
     filled = max(1, min(12, math.ceil(shown / 100 * 12)))
     bar = "🟦" * filled + "🟥" * (12 - filled)
