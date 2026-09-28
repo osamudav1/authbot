@@ -369,6 +369,15 @@ class AuctionBot:
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
+            if command in {"balance", "bal"}:
+                if not update.effective_user or update.effective_user.is_bot:
+                    return
+                if args:
+                    raise RuleError("Group မှာ /bal ကို argument မပါဘဲ သုံးပါ။")
+                self.store.close_due()
+                row = self.store.wallet_balance(update.effective_user.id)
+                await message.reply_text(f"Guess Author Bal\n\nBal - {money(row['available'])}")
+                return
             auction_id = self.resolve(message)
             if command == "rules" and auction_id:
                 await message.reply_text(self.store.get("rules"))
