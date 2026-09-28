@@ -1,6 +1,7 @@
 """MongoDB replica-set storage. Every ledger mutation commits atomically."""
 import time
 import re
+import random
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
@@ -368,6 +369,101 @@ class MongoStore:
 
     def set_pvp_message(self,game_id,message_id):
         self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"message_id":message_id}})
+
+    def create_boom(self, game_id, group_id, requester_id, requester_name, target_id, target_name, amount, now=None):
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if requester_id == target_id:
+            raise RuleError("ကိုယ့်ကိုယ်ကို Boom request လုပ်လို့မရပါ။")
+        def create(s):
+            at = time.time() if now is None else now
+            if str(group_id) != str(self.get("pvp_group_id", session=s)):
+                raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 2:
+                raise RuleError("လက်ရှိ Boom ပွဲ ၂ ပွဲ ကစားနေပါတယ်။")
+            balance = self.wallet_balance(requester_id, s)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            self.db.boom_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,
+                requester_id=requester_id,requester_name=requester_name[:64],target_id=target_id,
+                target_name=target_name[:64],amount=amount,status="pending",message_id=0,created=at,
+                board_size=None,boom_positions=[],revealed=[],turn_id=None,winner_id=None), session=s)
+            return self._clean(self.db.boom_games.find_one({"_id":game_id}, session=s))
+        return self._tx(create)
+
+    def set_boom_message(self, game_id, message_id):
+        self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"message_id":message_id}})
+
+    def cancel_boom(self, game_id, actor_id):
+        def cancel(s):
+            row = self.db.boom_games.find_one({"_id":game_id}, session=s)
+            if not row or actor_id not in (row["requester_id"], row["target_id"]):
+                raise RuleError("ဒီ Boom request ကို cancel လုပ်ခွင့်မရှိပါ။")
+            if row["status"] != "pending":
+                raise RuleError("ဒီ Boom request ကို ယခု cancel မလုပ်နိုင်ပါ။")
+            self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"cancelled"}},session=s)
+            row["status"] = "cancelled"
+            return self._clean(row)
+        return self._tx(cancel)
+
+    def expire_boom(self, now=None):
+        at = time.time() if now is None else now
+        cutoff = at - PVP_REQUEST_TIMEOUT_SECONDS
+        def expire(s):
+            rows = list(self.db.boom_games.find({"status":"pending","created":{"$lte":cutoff}},session=s))
+            expired=[]
+            for row in rows:
+                result=self.db.boom_games.update_one({"_id":row["_id"],"status":"pending"},{"$set":{"status":"cancelled"}},session=s)
+                if result.modified_count:
+                    row["status"]="cancelled"; expired.append(self._clean(row))
+            return expired
+        return self._tx(expire)
+
+    def accept_boom(self, game_id, actor_id, now=None):
+        def accept(s):
+            at=time.time() if now is None else now
+            row=self.db.boom_games.find_one({"_id":game_id},session=s)
+            if not row or actor_id != row["target_id"]: raise RuleError("Boom ကို ဖိတ်ခေါ်ခံရသူပဲ Confirm လုပ်နိုင်ပါတယ်။")
+            if row["status"] != "pending": raise RuleError("ဒီ Boom request ကို အရင်ဖြေပြီးပါပြီ။")
+            if str(row["group_id"]) != str(self.get("pvp_group_id",session=s)): raise RuleError("ဒီ group မှာ Boom မကစားနိုင်တော့ပါ။")
+            for uid in (row["requester_id"],row["target_id"]):
+                balance=self.wallet_balance(uid,s)
+                if balance["available"] < row["amount"]: raise RuleError(f"User {uid} မှာ coin မလုံလောက်ပါ။")
+            for uid in (row["requester_id"],row["target_id"]):
+                self.db.wallets.update_one({"_id":uid,"balance":{"$gte":row["amount"]}},{"$inc":{"balance":-row["amount"]}},session=s)
+                eid=self._next("wallet_events",s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="boom_stake",note=f"Boom stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"boom:{game_id}:stake:{uid}",created=at),session=s)
+            size=random.choice((6,9)); positions=random.sample(range(1,size+1),2)
+            owners={str(positions[0]):row["requester_id"],str(positions[1]):row["target_id"]}
+            self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","board_size":size,"boom_positions":positions,"boom_owners":owners,"revealed":[],"turn_id":row["requester_id"]}},session=s)
+            return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
+        return self._tx(accept)
+
+    def pick_boom(self, game_id, actor_id, number, now=None):
+        def pick(s):
+            row=self.db.boom_games.find_one({"_id":game_id},session=s)
+            if not row or row["status"] != "running": raise RuleError("ဒီ Boom game မကစားနိုင်တော့ပါ။")
+            if actor_id not in (row["requester_id"],row["target_id"]): raise RuleError("ဒီ game ထဲက player ၂ ယောက်ပဲ နှိပ်နိုင်ပါတယ်။")
+            if actor_id != row["turn_id"]: raise RuleError("အခု သင့်အလှည့်မဟုတ်ပါ။")
+            if number in row["revealed"]: raise RuleError("ဒီ button ကို နှိပ်ပြီးသားပါ။")
+            if number < 1 or number > row["board_size"]: raise RuleError("Button မမှန်ပါ။")
+            at=time.time() if now is None else now
+            if number in row["boom_positions"]:
+                owner=row.get("boom_owners",{}).get(str(number))
+                winner=actor_id if owner == actor_id else (row["target_id"] if actor_id==row["requester_id"] else row["requester_id"])
+                pot=row["amount"]*2
+                self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":pot}},session=s)
+                eid=self._next("wallet_events",s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom prize · {game_id}",actor_id=None,auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner},"$addToSet":{"revealed":number}},session=s)
+            else:
+                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"]}},session=s)
+            return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
+        return self._tx(pick)
+
+    def boom_top(self, limit=10):
+        rows=list(self.db.wallets.find().sort("balance",-1).limit(limit))
+        return [{"user_id":r["_id"],"balance":r.get("balance",0)} for r in rows]
 
     def cancel_pvp(self,game_id,actor_id):
         def cancel(s):

@@ -78,6 +78,8 @@ AUCTION_GROUP_COMMANDS = [
 ]
 PVP_GROUP_COMMANDS = [
     BotCommand("pvp", "ပြိုင်ဘက်ကို coin wager PvP စိန်ခေါ်ရန် (သူ့ message ကို reply လုပ်ပါ)"),
+    BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
+    BotCommand("btop", "Coin အများဆုံး Top 10"),
     BotCommand("author", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
@@ -211,6 +213,34 @@ def pvp_animation_text(game):
     else:
         text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး ပွဲပြီးချိန်မှာ အနိုင်ရသူကို ဆုငွေပေးပါမယ်။"
     return text
+
+
+def boom_markup(game):
+    rows=[]
+    size=game.get("board_size") or 6
+    revealed=set(game.get("revealed", []))
+    for start in range(1,size+1,3):
+        row=[]
+        for number in range(start,min(start+3,size+1)):
+            label="❄️" if number in revealed else str(number)
+            if game.get("status") == "finished" and number in game.get("boom_positions", []):
+                label="💥"
+            row.append(InlineKeyboardButton(label, callback_data=f'boom:pick:{game["id"]}:{number}'))
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def boom_text(game):
+    text=(f'💣 <b>Boom · {money(game["amount"])} each</b>\n\n'
+          f'🟦 {pvp_name(game["requester_id"],game["requester_name"])}\n'
+          f'🟥 {pvp_name(game["target_id"],game["target_name"])}\n\n')
+    if game.get("status") == "finished":
+        winner=game.get("winner_id")
+        name=game["requester_name"] if winner==game["requester_id"] else game["target_name"]
+        return text + f'🏆 Winner: {pvp_name(winner,name)}\n🪙 Prize: {money(game["amount"]*2)}'
+    turn=game.get("turn_id")
+    name=game["requester_name"] if turn==game["requester_id"] else game["target_name"]
+    return text + f'🎯 Turn: {pvp_name(turn,name)}\nButton တစ်ခုရွေးပါ။'
 
 
 def caption(row, now=None):
@@ -486,6 +516,10 @@ class AuctionBot:
                     await self.author_command(message)
                 elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
+                elif command == "boom":
+                    await self.boom_request(args, message, update.effective_user)
+                elif command == "btop":
+                    await self.btop_command(args, message, context)
                 elif command == "bal":
                     if args:
                         raise RuleError("Group မှာ /bal ကို argument မပါဘဲ သုံးပါ။")
@@ -638,6 +672,46 @@ class AuctionBot:
             except Exception:
                 pass
             raise
+
+    async def boom_request(self, args, message, user):
+        if not user or user.is_bot:
+            raise RuleError("Telegram user account နဲ့ပဲ Boom ကစားနိုင်ပါတယ်။")
+        if len(args) != 1:
+            raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /boom 250 ပုံစံရေးပါ။")
+        reply=message.reply_to_message
+        target=reply.from_user if reply and not reply.sender_chat else None
+        if not target or target.is_bot:
+            raise RuleError("Boom လုပ်မယ့် user ရဲ့ message ကို reply လုပ်ပါ။")
+        if target.id == user.id: raise RuleError("ကိုယ့်ကိုယ်ကို Boom request လုပ်လို့မရပါ။")
+        amount=cents(args[0]); game_id=secrets.token_hex(8)
+        game=await self.store_call(self.store.create_boom,game_id,message.chat_id,user.id,user.full_name,target.id,target.full_name,amount)
+        markup=InlineKeyboardMarkup([[
+            button("✅ Confirm",f"boom:confirm:{game_id}","success"),
+            button("❌ Cancel",f"boom:cancel:{game_id}","danger")]])
+        text=(f'💣 Boom စိန်ခေါ်မှု\n\n{pvp_name(user.id,user.full_name)}\n'
+              f'🪙 လောင်းကြေး: <b>{money(amount)}</b> တစ်ယောက်စီ\n'
+              f'ပြိုင်ဘက်: {pvp_name(target.id,target.full_name)}\n\n'
+              f'{pvp_name(target.id,target.full_name)} က Confirm Waiting။ 15sec အတွင်း မနှိပ်ပါက ပွဲပယ်ပါမယ်။')
+        try:
+            posted=await message.reply_text(text,parse_mode="HTML",reply_markup=markup)
+            await self.store_call(self.store.set_boom_message,game_id,posted.message_id)
+        except Exception:
+            try: await self.store_call(self.store.cancel_boom,game_id,user.id)
+            except Exception: pass
+            raise
+
+    async def btop_command(self, args, message, context):
+        if args: raise RuleError("/btop ကို argument မပါဘဲ သုံးပါ။")
+        rows=await self.store_call(self.store.boom_top,10)
+        lines=["🏆 Coin Top 10"]
+        for index,row in enumerate(rows,1):
+            try:
+                member=await context.bot.get_chat_member(message.chat_id,row["user_id"])
+                name=member.user.full_name
+            except TelegramError:
+                name=f'ID {row["user_id"]}'
+            lines.append(f'{index}. {html.escape(name)} > {money(row["balance"])}')
+        await message.reply_text("\n".join(lines),parse_mode="HTML")
 
     async def auther_command(self, message, context):
         row = next((item for item in await self.store_call(self.store.listing, 30)
@@ -968,6 +1042,32 @@ class AuctionBot:
         if remaining:
             await query.answer(f"ခဏစောင့်ပါ ({remaining:.1f} sec)", show_alert=True)
             return
+        if (query.data or "").startswith("boom:"):
+            if not self.pvp_group(update) or not update.effective_user or update.effective_user.is_bot:
+                await query.answer("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ သုံးနိုင်ပါတယ်။", show_alert=True)
+                return
+            try:
+                parts=query.data.split(":")
+                action,game_id=parts[1],parts[2]
+                if action == "confirm":
+                    game=await self.store_call(self.store.accept_boom,game_id,update.effective_user.id)
+                    await query.answer("Boom ပွဲ စတင်ပါပြီ။")
+                    await query.edit_message_text(boom_text(game),parse_mode="HTML",reply_markup=boom_markup(game))
+                elif action == "cancel":
+                    game=await self.store_call(self.store.cancel_boom,game_id,update.effective_user.id)
+                    await query.answer("Boom request ကို ဖျက်သိမ်းပြီးပါပြီ။")
+                    await query.edit_message_text(f'❌ Boom request ပယ်ဖျက်ပြီးပါပြီ။\n{pvp_name(game["requester_id"],game["requester_name"])} · {pvp_name(game["target_id"],game["target_name"])}',parse_mode="HTML")
+                elif action == "pick" and len(parts)==4:
+                    game=await self.store_call(self.store.pick_boom,game_id,update.effective_user.id,int(parts[3]))
+                    await query.answer("Boom!" if game["status"]=="finished" else "Safe button ပါ။")
+                    await query.edit_message_text(boom_text(game),parse_mode="HTML",reply_markup=None if game["status"]=="finished" else boom_markup(game))
+                else:
+                    await query.answer("လုပ်ဆောင်ချက် မမှန်ပါ။",show_alert=True)
+            except (RuleError,ValueError) as exc:
+                await query.answer(str(exc) if isinstance(exc,RuleError) else "Boom request မမှန်ပါ။",show_alert=True)
+            except (PyMongoError,TelegramError):
+                await query.answer("Boom game ယာယီမရနိုင်ပါ။ ခဏနေ ပြန်စမ်းပါ။",show_alert=True)
+            return
         if (query.data or "").startswith("pvp:"):
             if not self.pvp_group(update) or not update.effective_user or update.effective_user.is_bot:
                 await query.answer("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ သုံးနိုင်ပါတယ်။", show_alert=True)
@@ -1197,6 +1297,18 @@ class AuctionBot:
                     parse_mode="HTML")
             except TelegramError:
                 log.warning("Expired PvP request message update failed for round %s", game["id"])
+        expired_boom = await self.store_call(self.store.expire_boom)
+        for game in expired_boom:
+            if not game.get("message_id"):
+                continue
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=game["group_id"], message_id=game["message_id"],
+                    text=(f'❌ Boom request 15sec အတွင်း Confirm မလုပ်သဖြင့် အလိုအလျောက် ပယ်ဖျက်ပြီးပါပြီ။\n\n'
+                          f'{pvp_name(game["requester_id"],game["requester_name"])} · '
+                          f'{pvp_name(game["target_id"],game["target_name"])}'), parse_mode="HTML")
+            except TelegramError:
+                log.warning("Expired Boom request message update failed for round %s", game["id"])
         due_rounds = await self.store_call(self.store.due_pvp)
         for due in due_rounds:
             try:
