@@ -8,27 +8,10 @@ from .store import RuleError, money
 
 
 class MongoStore:
-    def __init__(self, uri, database, org_uri=None, org_database=None,
-                 org_user_collection="users", org_user_id_field="_id",
-                 org_balance_field="coins", org_balance_scale=100):
-        if org_uri and org_uri != uri:
-            raise ValueError("ORG_MONGO_URI must equal MONGODB_URI so wallet and auction writes share one transaction")
-        if not org_database:
-            raise ValueError("ORG_MONGO_DB must be set; refusing to use auction collections as the org wallet")
-        if not all(part.replace("_", "").isalnum() for part in org_user_collection.split(".")):
-            raise ValueError("ORG_USER_COLLECTION contains an unsafe name")
-        if not all(part.replace("_", "").isalnum() for part in org_user_id_field.split(".")):
-            raise ValueError("ORG_USER_ID_FIELD contains an unsafe name")
-        if not all(part.replace("_", "").isalnum() for part in org_balance_field.split(".")):
-            raise ValueError("ORG_BALANCE_FIELD contains an unsafe name")
+    def __init__(self, uri, database):
         self.client = MongoClient(uri, serverSelectionTimeoutMS=10000, connectTimeoutMS=10000,
                                   socketTimeoutMS=20000, appname="authbid-bot")
         self.db = self.client[database]
-        self.wallet_db = self.client[org_database]
-        self.wallet_collection = self.wallet_db[org_user_collection]
-        self.wallet_id_field = org_user_id_field
-        self.wallet_balance_field = org_balance_field
-        self.wallet_balance_scale = org_balance_scale
         hello = self.client.admin.command("hello")
         if not hello.get("setName") and hello.get("msg") != "isdbgrid":
             self.close()
@@ -52,19 +35,6 @@ class MongoStore:
 
     def close(self):
         self.client.close()
-
-    def _wallet_filter(self, user_id):
-        return {self.wallet_id_field: user_id}
-
-    def _wallet_value(self, row):
-        raw = row.get(self.wallet_balance_field, 0) if row else 0
-        try:
-            return int(round(float(raw) * self.wallet_balance_scale))
-        except (TypeError, ValueError):
-            raise RuleError("Org wallet balance is not numeric; no wallet change was made") from None
-
-    def _wallet_amount(self, cents):
-        return cents / self.wallet_balance_scale
 
     def _tx(self, operation):
         def execute(session):
@@ -190,10 +160,8 @@ class MongoStore:
     def wallet_balance(self, user_id, session=None):
         if session is None:
             return self._tx(lambda s:self.wallet_balance(user_id,s))
-        row=self.wallet_collection.find_one(self._wallet_filter(user_id),session=session)
-        if row is None:
-            raise RuleError("ဒီ user ရဲ့ org wallet မတွေ့ပါ။ ပထမဆုံး org wallet ထဲ user record ဖန်တီးပါ။")
-        total=self._wallet_value(row)
+        row=self.db.wallets.find_one({"_id":user_id},session=session)
+        total=row["balance"] if row else 0
         held=sum(r["amount"] for r in self.db.holds.find({"user_id":user_id},session=session))
         return {"total":total,"held":held,"available":total-held}
 
@@ -240,11 +208,7 @@ class MongoStore:
             hold=self.db.holds.find_one({"_id":aid},session=s)
             if not hold or hold["user_id"]!=row["winner_id"] or hold["amount"]!=row["highest"]:
                 raise RuleError("Wallet hold မကိုက်ညီပါ။ Owner က စစ်ဆေးရန်လိုပါတယ်။")
-            result=self.wallet_collection.update_one(
-                {**self._wallet_filter(hold["user_id"]),
-                 self.wallet_balance_field: {"$gte": self._wallet_amount(hold["amount"])}},
-                {"$inc": {self.wallet_balance_field: -self._wallet_amount(hold["amount"])}},
-                session=s)
+            result=self.db.wallets.update_one({"_id":hold["user_id"],"balance":{"$gte":hold["amount"]}}, {"$inc":{"balance":-hold["amount"]}},session=s)
             if result.modified_count!=1:raise RuleError("Winner balance မလုံလောက်ပါ။")
             eid=self._next("wallet_events",s)
             self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=hold["user_id"],delta=-hold["amount"],kind="win",note="Auction purchase",actor_id=None,auction_id=aid,event_key=f"settle:{aid}",created=int(time.time())),session=s)
@@ -312,12 +276,7 @@ class MongoStore:
             balance=self.wallet_balance(user_id,s)
             if balance["available"]+delta<0:raise RuleError("ထိန်းထားတဲ့ bid ငွေကို နုတ်လို့မရပါ။ Available balance မလုံလောက်ပါ။")
             if balance["total"]+delta>99999999999:raise RuleError("Wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
-            result=self.wallet_collection.update_one(
-                self._wallet_filter(user_id),
-                {"$inc": {self.wallet_balance_field: self._wallet_amount(delta)}},
-                upsert=False, session=s)
-            if result.modified_count != 1:
-                raise RuleError("Org wallet မတွေ့ပါ။ User document အသစ်မဖန်တီးဘဲ ရပ်ထားပါတယ်။")
+            self.db.wallets.update_one({"_id":user_id},{"$inc":{"balance":delta},"$set":{"user_id":user_id}},upsert=True,session=s)
             eid=self._next("wallet_events",s)
             self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=user_id,delta=delta,kind="credit" if delta>0 else "debit",note=note,actor_id=actor_id,auction_id=None,event_key=event_key,created=int(time.time())),session=s)
             return True

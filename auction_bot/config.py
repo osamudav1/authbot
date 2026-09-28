@@ -12,12 +12,6 @@ class Config:
     group_id: str = ""
     mongodb_uri: str = ""
     mongodb_database: str = "authbid_bot"
-    org_mongo_uri: str = ""
-    org_mongo_database: str = ""
-    org_user_collection: str = "users"
-    org_user_id_field: str = "_id"
-    org_balance_field: str = "coins"
-    org_balance_scale: int = 100
     require_wallet: bool = False
 
     @classmethod
@@ -39,27 +33,6 @@ class Config:
         database = os.getenv("MONGODB_DATABASE", "authbid_bot").strip()
         if not database or any(c in database for c in '/\\. "$*<>:|?') or len(database.encode())>63:
             raise ValueError("MONGODB_DATABASE is invalid")
-        org_uri = os.getenv("ORG_MONGO_URI", "").strip()
-        if not org_uri.startswith(("mongodb://", "mongodb+srv://")):
-            raise ValueError("Set ORG_MONGO_URI to the protected org wallet MongoDB connection string")
-        org_database = os.getenv("ORG_MONGO_DB", "").strip()
-        if not org_database or any(c in org_database for c in '/\\. "$*<>:|?') or len(org_database.encode())>63:
-            raise ValueError("ORG_MONGO_DB is invalid")
-        org_collection = os.getenv("ORG_USER_COLLECTION", "users").strip()
-        org_id_field = os.getenv("ORG_USER_ID_FIELD", "_id").strip()
-        org_balance_field = os.getenv("ORG_BALANCE_FIELD", "coins").strip()
-        for name, value in (("ORG_USER_COLLECTION", org_collection),
-                            ("ORG_USER_ID_FIELD", org_id_field),
-                            ("ORG_BALANCE_FIELD", org_balance_field)):
-            if not value or not all(part.replace("_", "").isalnum() for part in value.split(".")):
-                raise ValueError(f"{name} must be a simple MongoDB field/collection name")
-        try:
-            org_scale = int(os.getenv("ORG_BALANCE_SCALE", "100"))
-        except ValueError:
-            raise ValueError("ORG_BALANCE_SCALE must be a positive integer") from None
-        if org_scale <= 0:
-            raise ValueError("ORG_BALANCE_SCALE must be a positive integer")
         return cls(token, frozenset(int(owner) for owner in owners),
                    os.getenv("DATABASE_PATH", "data/auctions.sqlite3"),
-                   os.getenv("CHANNEL_ID", "").strip(), os.getenv("GROUP_ID", "").strip(), uri, database,
-                   org_uri, org_database, org_collection, org_id_field, org_balance_field, org_scale, True)
+                   os.getenv("CHANNEL_ID", "").strip(), os.getenv("GROUP_ID", "").strip(), uri, database, True)

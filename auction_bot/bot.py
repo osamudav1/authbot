@@ -184,10 +184,7 @@ def caption(row, now=None):
 class AuctionBot:
     def __init__(self, config):
         self.config = config
-        self.store = MongoStore(config.mongodb_uri, config.mongodb_database,
-                                config.org_mongo_uri, config.org_mongo_database,
-                                config.org_user_collection, config.org_user_id_field,
-                                config.org_balance_field, config.org_balance_scale) if config.mongodb_uri else Store(config.database)
+        self.store = MongoStore(config.mongodb_uri, config.mongodb_database) if config.mongodb_uri else Store(config.database)
         if config.require_wallet and not config.mongodb_uri:
             self.store.enable_wallet()
         # Environment IDs bootstrap an empty DB; owner settings survive restarts.
