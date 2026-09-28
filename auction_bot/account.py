@@ -5,7 +5,7 @@ import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .store import RuleError, money
+from .domain import RuleError, money
 
 
 def button(label, action, style="primary"):

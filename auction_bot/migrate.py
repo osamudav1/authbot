@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from .config import Config
 from .mongo_store import MongoStore
-from .store import RuleError
+from .domain import RuleError
 from pymongo.errors import PyMongoError
 
 TABLES=("settings","auctions","bids","wallets","holds","wallet_events","banned","messages")

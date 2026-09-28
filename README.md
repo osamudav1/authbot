@@ -9,7 +9,7 @@ Telegram waifu ကဒ်လေလံနှင့် PvP bot — လေလံ bid
 - Owner သတ်မှတ်ထားသော channel ထဲ photo post တင်ပေးသည်။
 - အဲဒီ channel နှင့်ချိတ်ထားသော discussion supergroup ရဲ့ auction comments ထဲမှာ `/bid 10.50`။
 - လေလံအတွက် discussion group နှင့် PvP အတွက် သီးခြား game group သတ်မှတ်နိုင်သည်။ အခြား groups ကို မတုံ့ပြန်ပါ။ PvP group မှာ `/pvp`, `/bal`, `/bcoin` သုံးနိုင်ပြီး `/bcoin` က reply လုပ်ထားသူကို coin gift ပို့သည်။ Non-owner private chats မှာ `/start` welcome နှင့် ကိုယ်ပိုင် account commands ကိုသုံးနိုင်သည်။ Owner admin commands ကို private chat မှာသုံးပါ။ `/auth` ကို owner က သတ်မှတ်ထားသော discussion group မှာလည်း သုံးနိုင်သည်။
-- Bid အသစ်ကို ချက်ချင်းပြင်ပြီး ဆက်တိုက် bids များကို နောက်ဆုံး bid မှ **၂ စက္ကန့်ငြိမ်မှ** channel caption တစ်ခါတည်း ပြင်ပေးသည်။ Telegram rate limit / network error ရှိရင် နောက်ကျနိုင်သည်။ မပြောင်းလဲသည့် post ကို ထပ်မပြင်ပါ။
+- Bid လက်ခံပြီး user ကို receipt ကို ချက်ချင်းပြန်ပို့သည်။ Channel caption ကို ပုံမှန်အားဖြင့် နောက် worker tick (**၀.၅ စက္ကန့်အတွင်း**) ပြင်ပြီး ဆက်တိုက် bids များကို နောက်ဆုံး bid မှ **၂ စက္ကန့်ငြိမ်မှ** တစ်ခါတည်း update လုပ်သည်။ Telegram rate limit / network error ရှိရင် နောက်ကျနိုင်သည်။ မပြောင်းလဲသည့် post ကို ထပ်မပြင်ပါ။
 - Bid ရောက်လာချိန်အလိုက် database transaction ဖြင့် လက်ခံသည်။ တူညီသည့် bid ပမာဏကို ပြိုင်ဆွဲလျှင် ပထမ commit ဖြစ်သူ အနိုင်ရသည်။
 - End time အတိအကျရောက်လျှင် bid မလက်ခံတော့ပါ။ နောက် worker tick မှာ winner ကို မူရင်း post ထဲပြပေးသည်။ Bid မရှိပါက winner မရှိပါ။
 - MongoDB မှာ auctions၊ bids၊ wallets/holds၊ PvP rounds၊ settings၊ bans နှင့် comment mappings သိမ်းသည်။ Restart ပြီး expired auctions နှင့် PvP animation များကို ဆက်လုပ်သည်။
@@ -41,8 +41,8 @@ MONGODB_DATABASE=authbid_bot
 - `OWNER_IDS`: Owner Telegram **numeric user ID**။ Owner အများကြီးဆို comma ခြားရေးပါ။ Username မသုံးပါနှင့်။ Owner IDs ကို environment မှသာ သတ်မှတ်နိုင်သည်။
 - `CHANNEL_ID`, `GROUP_ID`: Numeric chat IDs။ အစမှာ ချန်ထားပြီး owner private chat ရဲ့ `/setchannel` နှင့် `/setgroup` နဲ့ သတ်မှတ်လည်းရသည်။
 - Environment chat IDs သည် empty database အတွက် bootstrap ဖြစ်သည်။ Bot commands နှင့်သိမ်းထားသော settings က restart ပြီးလည်း အကျုံးဝင်သည်။
-- `MONGODB_URI`: MongoDB Atlas သို့ replica set connection string။ Standalone MongoDB သည် multi-document transactions မရသဖြင့် မသုံးနိုင်ပါ။ `MONGODB_DATABASE`: database name (default `authbid_bot`)။
-- URI မရှိ/မချိတ်နိုင်လျှင် startup ရပ်သည်။ SQLite သို့ အလိုအလျောက် fallback မလုပ်ပါ။ `.env` နှင့် backups ကို private ထားပါ။
+- `MONGODB_URI`: မဖြစ်မနေလိုအပ်သော MongoDB Atlas သို့ replica set connection string။ Standalone MongoDB သည် multi-document transactions မရသဖြင့် မသုံးနိုင်ပါ။ `MONGODB_DATABASE`: database name (default `authbid_bot`)။
+- URI မရှိလျှင် startup ရပ်သည်။ Bot runtime သည် MongoDB တစ်ခုတည်းသုံးပြီး SQLite fallback/backend မပါပါ။ SQLite ကို legacy data migration နှင့် test utility အတွက်သာ ထားသည်။ `.env` နှင့် backups ကို private ထားပါ။
 
 ### Telegram ပြင်ဆင်ခြင်း
 
@@ -294,8 +294,9 @@ Legacy compatibility tests တွေက temporary SQLite databases သုံး�
 
 ```text
 auction_bot/config.py   Environment validation
+auction_bot/domain.py   Shared database-agnostic rules and currency helpers
 auction_bot/mongo_store.py MongoDB transactions and persistent data
-auction_bot/store.py    Legacy SQLite migration/compatibility
+auction_bot/store.py    Test-only legacy SQLite adapter (not used at runtime)
 auction_bot/migrate.py  Atomic SQLite-to-MongoDB migration
 auction_bot/bot.py      Owner wizard, panel, comments, periodic updates
 auction_bot/welcome.py  Welcome templates, placeholders, link buttons
@@ -340,7 +341,7 @@ Telegram behavior references: [Bot API message and forward fields](https://core.
 4. `python -m auction_bot.migrate --sqlite data/auctions.sqlite3 --apply` ဖြင့် empty target ထဲ transaction တစ်ခုတည်းနှင့် import လုပ်ပါ။ Source SQLite ကိုမပြင်ပါ။ Target တွင် data/settings ရှိပြီးသား၊ import လုပ်ပြီးသားဆို မထပ်ရေးပါ။ Failed import တွင် partial data မကျန်ပါ။
 5. Auctions/bids၊ wallet/holds/events၊ settings/welcome၊ bans၊ comment mappings နှင့် ID counters အားလုံးရွှေ့ပြီးမှ `python run.py` ဖြင့် bot တစ်ခုတည်းဖွင့်ပါ။ MongoDB အသစ်ထဲ credit/bid မလုပ်ခင်မှသာ SQLite backup ကို rollback source အဖြစ်ပြန်သုံးနိုင်သည်။
 
-Migration source က လက်ရှိ schema ဖြစ်ရမည်။ SQLite implementation ကို compatibility tests/migration အတွက်သိမ်းထားခြင်းဖြစ်ပြီး production `run.py` က MongoDB URI မရှိလျှင် မစပါ။
+Migration source က လက်ရှိ schema ဖြစ်ရမည်။ SQLite ကို one-time migration source နှင့် compatibility tests အတွက်သာသုံးသည်; production `run.py` သည် MongoDB တစ်ခုတည်းသုံးပြီး MongoDB URI မရှိလျှင် မစပါ။
 
 MongoDB integration tests:
 

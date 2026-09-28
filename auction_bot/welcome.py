@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .store import RuleError
+from .domain import RuleError
 
 DEFAULT = {"photo": None, "text": "မင်္ဂလာပါ {mention} 👋\n🎴 Waifu auction bot မှ ကြိုဆိုပါတယ်။\nChannel ရဲ့ card post Comments ထဲမှာ /bid ပမာဏ နဲ့ လေလံဆွဲနိုင်ပါတယ်။", "buttons": []}
 PLACEHOLDERS = ("mention", "first_name", "last_name", "full_name", "username", "user_id", "bot_name", "bot_username")

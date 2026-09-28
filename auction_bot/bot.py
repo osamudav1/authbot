@@ -18,12 +18,14 @@ from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, 
 from . import account, welcome
 from .config import Config
 from .source_export import source_zip
-from .store import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, Store, cents, money, usd_to_coins
+from .domain import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
 from .mongo_store import MongoStore
 from pymongo.errors import PyMongoError
 
 log = logging.getLogger(__name__)
 POLLING_UPDATES = ["message", "callback_query", "inline_query"]
+UPDATE_CONCURRENCY = 16
+WORKER_TICK_INTERVAL_SECONDS = 0.5
 OWNER_ACTIONS = {
     "zip": "Bot code ZIP ယူရန်: /zip (Owner DM only)",
     "new": "Card အသစ်တင်ရန်",
@@ -227,13 +229,16 @@ def caption(row, now=None):
 class AuctionBot:
     def __init__(self, config):
         self.config = config
-        self.store = MongoStore(config.mongodb_uri, config.mongodb_database) if config.mongodb_uri else Store(config.database)
-        if config.require_wallet and not config.mongodb_uri:
-            self.store.enable_wallet()
+        if not config.mongodb_uri:
+            raise ValueError("MONGODB_URI is required; SQLite is not supported by the bot runtime.")
+        self.store = MongoStore(config.mongodb_uri, config.mongodb_database)
         # Environment IDs bootstrap an empty DB; owner settings survive restarts.
         for key, value in [("channel_id", config.channel_id), ("group_id", config.group_id)]:
             if value and not self.store.get(key):
                 self.store.set(key, value)
+        self.channel_id = str(self.store.get("channel_id") or "")
+        self.group_id = str(self.store.get("group_id") or "")
+        self.pvp_group_id = str(self.store.get("pvp_group_id") or "")
         self.edit_after = {}
         self.last_bid_at = {}
         self.last_caption_at = {}
@@ -243,6 +248,12 @@ class AuctionBot:
         self.button_cooldown_until = {}
         self.global_edit_after = 0
         self.tick_lock = asyncio.Lock()
+
+    async def store_call(self, operation, *args, **kwargs):
+        """Keep synchronous MongoDB I/O off the asyncio event loop; SQLite stays local."""
+        if isinstance(self.store, MongoStore):
+            return await asyncio.to_thread(operation, *args, **kwargs)
+        return operation(*args, **kwargs)
 
     def button_cooldown(self, user):
         """Return remaining seconds for callback clicks, then arm a two-second cooldown."""
@@ -266,12 +277,12 @@ class AuctionBot:
 
     def group(self, update):
         return bool(update.effective_chat and update.effective_chat.type == "supergroup"
-                    and str(update.effective_chat.id) == self.store.get("group_id"))
+                    and str(update.effective_chat.id) == self.group_id)
 
     def pvp_group(self, update):
         return bool(update.effective_chat and update.effective_chat.type == "supergroup"
-                    and self.store.get("pvp_group_id")
-                    and str(update.effective_chat.id) == self.store.get("pvp_group_id"))
+                    and self.pvp_group_id
+                    and str(update.effective_chat.id) == self.pvp_group_id)
 
     async def panel(self, message):
         positive = {"new", "resume", "unban", "welcome", "credit", "auth"}
@@ -283,7 +294,7 @@ class AuctionBot:
                                  reply_markup=InlineKeyboardMarkup([buttons[i:i+2] for i in range(0, len(buttons), 2)]))
 
     async def linked(self, bot):
-        channel_id, group_id = self.store.get("channel_id"), self.store.get("group_id")
+        channel_id, group_id = self.channel_id, self.group_id
         if not channel_id or not group_id:
             raise RuleError("/setchannel နှင့် /setgroup အရင်သတ်မှတ်ပါ။")
         channel = await bot.get_chat(int(channel_id))
@@ -297,36 +308,37 @@ class AuctionBot:
         if member.status not in ("administrator", "creator"):
             raise RuleError("Bot ကို discussion group admin ပေးပါ။")
 
-    def remember(self, message):
+    async def remember(self, message):
         """Trust only Telegram automatic forwards from the configured channel."""
-        if not message or str(message.chat_id) != self.store.get("group_id"):
+        if not message or str(message.chat_id) != self.group_id:
             return
         origin = message.forward_origin
-        if message.is_automatic_forward and isinstance(origin, MessageOriginChannel) and str(origin.chat.id) == self.store.get("channel_id"):
-            row = self.store.find_post(origin.chat.id, origin.message_id, message.chat_id)
+        if message.is_automatic_forward and isinstance(origin, MessageOriginChannel) and str(origin.chat.id) == self.channel_id:
+            row = await self.store_call(self.store.find_post, origin.chat.id, origin.message_id, message.chat_id)
             auction_id = row["id"] if row else None
             if auction_id is None:
                 # Recover a sendPhoto whose successful response was lost in transit.
                 match = re.match(r"🎴\s*WAIFU AUCTION #(\d+)\n", message.caption or "", re.IGNORECASE)
                 if match:
-                    candidate = self.store.recoverable(int(match[1]), origin.chat.id, message.chat_id)
+                    candidate = await self.store_call(self.store.recoverable, int(match[1]), origin.chat.id, message.chat_id)
                     if candidate and message.photo and candidate["photo"] == message.photo[-1].file_id:
                         auction_id = candidate["id"]
             if auction_id:
-                self.store.attach(auction_id, origin.message_id, message.message_id, int(origin.date.timestamp()))
+                await self.store_call(self.store.attach, auction_id, origin.message_id,
+                                      message.message_id, int(origin.date.timestamp()))
 
-    def resolve(self, message):
+    async def resolve(self, message):
         reply=message.reply_to_message
         # Forwarded/inline copies are not authoritative auction comment roots.
         for candidate in (message,reply):
             if candidate and (candidate.via_bot or (candidate.forward_origin and not candidate.is_automatic_forward)):
                 return None
-        self.remember(message)
-        self.remember(reply)
+        await self.remember(message)
+        await self.remember(reply)
         thread=message.message_thread_id
-        reply_auction=self.store.resolve(message.chat_id,[reply.message_id]) if reply else None
+        reply_auction=await self.store_call(self.store.resolve, message.chat_id, [reply.message_id]) if reply else None
         if thread:
-            auction_id=self.store.thread_auction(message.chat_id,thread)
+            auction_id=await self.store_call(self.store.thread_auction, message.chat_id, thread)
             if not auction_id:
                 return None
             if reply_auction and reply_auction!=auction_id:
@@ -336,17 +348,17 @@ class AuctionBot:
         else:
             auction_id=reply_auction
             if reply and reply.message_thread_id:
-                if self.store.thread_auction(message.chat_id,reply.message_thread_id)!=auction_id:
+                if await self.store_call(self.store.thread_auction, message.chat_id, reply.message_thread_id)!=auction_id:
                     return None
         if auction_id:
-            self.store.map_message(message.chat_id,message.message_id,auction_id)
+            await self.store_call(self.store.map_message, message.chat_id, message.message_id, auction_id)
         return auction_id
 
     async def inline_search(self, update, context):
         query=update.inline_query
         try:
             offset=int(query.offset or "0")
-            rows,more=self.store.search_active(query.query,offset=offset)
+            rows,more=await self.store_call(self.store.search_active, query.query, offset=offset)
         except (RuleError,ValueError,PyMongoError):
             await query.answer([],cache_time=0,is_personal=True)
             return
@@ -388,7 +400,7 @@ class AuctionBot:
             return
         if message.sender_chat:
             if self.group(update):
-                self.remember(message)
+                await self.remember(message)
             return
         text = message.text or ""
         words = text.split()
@@ -422,7 +434,8 @@ class AuctionBot:
                 return
             if private_user:
                 if command == "start":
-                    await welcome.send(message, welcome.load(self.store), update.effective_user, context.bot)
+                    value = await self.store_call(welcome.load, self.store)
+                    await welcome.send(message, value, update.effective_user, context.bot)
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
@@ -434,7 +447,7 @@ class AuctionBot:
                         raise RuleError("Group မှာ /bal ကို argument မပါဘဲ သုံးပါ။")
                     if not update.effective_user or update.effective_user.is_bot:
                         return
-                    row = self.store.wallet_balance(update.effective_user.id)
+                    row = await self.store_call(self.store.wallet_balance, update.effective_user.id)
                     await message.reply_text(f"🪙 Coin balance\n\nAvailable: {money(row['available'])}")
                 elif command == "bcoin":
                     await self.pvp_gift_command(args, message, update.effective_user)
@@ -447,13 +460,14 @@ class AuctionBot:
                     return
                 if args:
                     raise RuleError("Group မှာ /bal ကို argument မပါဘဲ သုံးပါ။")
-                self.store.close_due()
-                row = self.store.wallet_balance(update.effective_user.id)
+                row = await self.store_call(self.store.wallet_balance, update.effective_user.id)
                 await message.reply_text(f"Guess Author Bal\n\nBal - {money(row['available'])}")
                 return
-            auction_id = self.resolve(message)
+            if command not in {"bid", "rules"}:
+                return
+            auction_id = await self.resolve(message)
             if command == "rules" and auction_id:
-                await message.reply_text(self.store.get("rules"))
+                await message.reply_text(await self.store_call(self.store.get, "rules"))
                 return
             if command != "bid":
                 return
@@ -465,17 +479,17 @@ class AuctionBot:
                 raise RuleError("လေလံ post ရဲ့ Comments ထဲဝင်ပြီး post ကို reply လုပ်ပါ။")
             amount = cents(args[0])
             name = update.effective_user.full_name[:60]
-            accepted = self.store.bid(auction_id, update.effective_user.id, name, amount, message.chat_id, message.message_id)
+            accepted = await self.store_call(self.store.bid, auction_id, update.effective_user.id,
+                                             name, amount, message.chat_id, message.message_id)
             if accepted:
                 self.note_bid(auction_id)
-                await self.tick(context)
                 receipt = await message.reply_text(
                     f"☑ Author #{auction_id} —\n\n"
                     f"{update.effective_user.mention_html()}\n\n"
                     f"{money(amount)} bid ဖြင့် လေလံဆွဲထားပါပီ",
                     parse_mode="HTML",
                 )
-                self.store.map_message(message.chat_id, receipt.message_id, auction_id)
+                await self.store_call(self.store.map_message, message.chat_id, receipt.message_id, auction_id)
         except (RuleError, ValueError) as exc:
             await message.reply_text(str(exc) if isinstance(exc, RuleError) else "Command parameter မှားနေပါတယ်။ /panel မှာ အသုံးပြုပုံကြည့်ပါ။")
         except PyMongoError:
@@ -496,9 +510,9 @@ class AuctionBot:
 
     async def auth_command(self, args, message, actor_id, bot):
         user_id, delta, note = auth_adjustment(args, message)
-        changed = self.store.adjust_wallet(user_id, delta, actor_id,
+        changed = await self.store_call(self.store.adjust_wallet, user_id, delta, actor_id,
             f"owner:{message.chat_id}:{message.message_id}", note)
-        available = self.store.wallet_balance(user_id)["available"]
+        available = (await self.store_call(self.store.wallet_balance, user_id))["available"]
         notified = await self.wallet_credit_notification(bot, user_id, delta, available) if changed else True
         if changed:
             operation = "ထည့်" if delta>0 else "နုတ်"
@@ -535,7 +549,8 @@ class AuctionBot:
             raise RuleError("ကိုယ့်ကိုယ်ကို coin gift ပို့လို့မရပါ။")
         amount = cents(args[0])
         event_key = f"pvp-gift:{message.chat_id}:{message.message_id}"
-        changed = self.store.transfer_coins(message.chat_id,user.id,target.id,amount,event_key)
+        changed = await self.store_call(self.store.transfer_coins, message.chat_id,
+                                        user.id, target.id, amount, event_key)
         if changed:
             await message.reply_text(f"🎁 {money(amount)} ကို {target.full_name} ဆီ လက်ဆောင်ပို့ပြီးပါပြီ။")
         else:
@@ -556,8 +571,8 @@ class AuctionBot:
         if amount < MIN_PVP_WAGER:
             raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 500 coin ဖြစ်ရပါမယ်။")
         game_id = secrets.token_hex(8)
-        game = self.store.create_pvp(game_id, message.chat_id, user.id, user.full_name,
-                                     target.id, target.full_name, amount)
+        game = await self.store_call(self.store.create_pvp, game_id, message.chat_id,
+                                     user.id, user.full_name, target.id, target.full_name, amount)
         markup = InlineKeyboardMarkup([[
             button("✅ Confirm", f"pvp:confirm:{game_id}", "success"),
             button("❌ Cancel", f"pvp:cancel:{game_id}", "danger"),
@@ -569,16 +584,17 @@ class AuctionBot:
                 'နှစ်ဖက်စလုံးမှာ သတ်မှတ်ထားတဲ့ coin ပမာဏ အပြည့်ရှိရပါမယ်။')
         try:
             posted = await message.reply_text(text, parse_mode="HTML", reply_markup=markup)
-            self.store.set_pvp_message(game["id"], posted.message_id)
+            await self.store_call(self.store.set_pvp_message, game["id"], posted.message_id)
         except Exception:
             try:
-                self.store.cancel_pvp(game["id"], user.id)
+                await self.store_call(self.store.cancel_pvp, game["id"], user.id)
             except Exception:
                 pass
             raise
 
     async def auther_command(self, message, context):
-        row = next((item for item in self.store.listing(30) if item.get("post_id")), None)
+        row = next((item for item in await self.store_call(self.store.listing, 30)
+                    if item.get("post_id")), None)
         if not row:
             raise RuleError("Inline search ခလုတ်တပ်ရန် လေလံပုံ မရှိသေးပါ။")
         markup = InlineKeyboardMarkup([[
@@ -593,20 +609,20 @@ class AuctionBot:
     async def user_command(self, command, args, message, user, *, edit=False, content_page=0):
         if (command != "auctions" and args) or (command == "auctions" and len(args)>1):
             raise RuleError("ကိုယ့်အကောင့်ကိုသာ စစ်နိုင်ပါတယ်။ /menu ကိုသုံးပါ။")
-        self.store.close_due()
         markup = account.back()
         if command == "menu":
             markup = account.menu()
             text = f"👤 My account · ID {user.id}\nHistory၊ နိုင်ခဲ့သောကဒ်၊ လက်ကျန်နှင့် လက်ရှိလေလံကို ရွေးကြည့်ပါ။"
         elif command in {"history", "wins"}:
-            text = account.history(self.store, user.id, wins=command=="wins")
+            text = await self.store_call(account.history, self.store, user.id, wins=command=="wins")
         elif command == "auctions":
             page = int(args[0])-1 if args else 0
-            text, markup = account.active(self.store, page, inline_enabled=bool(message.get_bot().supports_inline_queries))
+            text, markup = await self.store_call(account.active, self.store, page,
+                                                 inline_enabled=bool(message.get_bot().supports_inline_queries))
         elif command in {"balance", "bal", "bcoin"}:
-            text = account.balance(self.store, user.id)
+            text = await self.store_call(account.balance, self.store, user.id)
         elif command == "transactions":
-            text = account.transactions(self.store, user.id)
+            text = await self.store_call(account.transactions, self.store, user.id)
         elif command == "close":
             text = "Menu ပိတ်ပြီးပါပြီ။ ပြန်ဖွင့်ရန် အောက်ကခလုတ် သို့မဟုတ် /menu ကိုသုံးပါ။"
             markup = InlineKeyboardMarkup([[account.button("👤 Open menu", "menu")]])
@@ -661,9 +677,9 @@ class AuctionBot:
             return
         if command in {"credit", "debit"}:
             user_id, delta, note = self.owner_wallet_adjustment(command, args, message)
-            changed = self.store.adjust_wallet(user_id, delta,
+            changed = await self.store_call(self.store.adjust_wallet, user_id, delta,
                 message.from_user.id, f"owner:{message.chat_id}:{message.message_id}", note)
-            available = self.store.wallet_balance(user_id)["available"]
+            available = (await self.store_call(self.store.wallet_balance, user_id))["available"]
             result = ("✅ ပြင်ပြီးပါပြီ။" if changed else "ဒီ request ကို အရင်က လုပ်ပြီးပါပြီ။") + f" User {user_id} · USD {usd_equivalent(abs(delta))} → {money(abs(delta))} · Available {money(available)}"
             if changed and delta > 0:
                 notified = await self.wallet_credit_notification(context.bot, user_id, delta, available)
@@ -673,15 +689,15 @@ class AuctionBot:
             user_id = int(args[0])
             if user_id<=0:
                 raise RuleError("Positive user ID ရေးပါ။")
-            self.store.close_due()
-            await message.reply_text(account.balance(self.store,user_id),parse_mode="HTML")
+            text = await self.store_call(account.balance, self.store, user_id)
+            await message.reply_text(text,parse_mode="HTML")
             return
         elif command == "walletmode":
             if args[0].lower() not in {"on","off"}:
                 raise RuleError(OWNER_ACTIONS[command])
-            if self.config.require_wallet and args[0].lower()=="off":
+            if args[0].lower()=="off":
                 raise RuleError("Bid အတွက် wallet hold လိုအပ်ပါတယ်။ ပိတ်၍မရပါ။")
-            self.store.set("wallet_mode", int(args[0].lower()=="on"))
+            await self.store_call(self.store.set, "wallet_mode", int(args[0].lower()=="on"))
             result = "✅ လေလံအသစ်များအတွက် Wallet " + args[0].lower() + " ဖြစ်ပါပြီ။ ရှိပြီးသားလေလံတွေရဲ့ payment ပုံစံ မပြောင်းပါ။"
         elif command == "check":
             await self.linked(context.bot)
@@ -693,7 +709,12 @@ class AuctionBot:
             chat = await context.bot.get_chat(chat_id)
             if chat.type != ("channel" if command == "setchannel" else "supergroup"):
                 raise RuleError("Channel / supergroup အမျိုးအစား မမှန်ပါ။")
-            self.store.target("channel_id" if command == "setchannel" else "group_id", chat_id)
+            await self.store_call(self.store.target,
+                                  "channel_id" if command == "setchannel" else "group_id", chat_id)
+            if command == "setchannel":
+                self.channel_id = str(chat_id)
+            else:
+                self.group_id = str(chat_id)
             result = "✅ သိမ်းပြီးပါပြီ။ /check နဲ့ ချိတ်ဆက်မှု စစ်ပါ။"
         elif command == "setpvpgp":
             chat_id = int(args[0])
@@ -702,61 +723,75 @@ class AuctionBot:
             chat = await context.bot.get_chat(chat_id)
             if chat.type != "supergroup":
                 raise RuleError("PvP အတွက် supergroup ID ကို သုံးပါ။")
-            self.store.set_pvp_group(chat_id)
+            await self.store_call(self.store.set_pvp_group, chat_id)
+            self.pvp_group_id = str(chat_id)
             await self.configure_menu(context.application)
             result = f"✅ PvP group သတ်မှတ်ပြီးပါပြီ: {chat_id}\nဒီ group မှာ /pvp, /bal, /bcoin ပဲ သုံးနိုင်ပါမယ်။"
         elif command == "increment":
-            self.store.set("increment", cents(args[0]))
+            await self.store_call(self.store.set, "increment", cents(args[0]))
             result = "✅ လေလံအသစ်တွေအတွက် increment သိမ်းပြီးပါပြီ။"
         elif command in ("pause", "resume"):
-            self.store.set("paused", int(command == "pause"))
+            await self.store_call(self.store.set, "paused", int(command == "pause"))
             result = "⏸ Bid ခဏရပ်ထားသည်။ End time ဆက်သွားပါမယ်။" if command == "pause" else "▶️ Bid ပြန်ဖွင့်ပြီးပါပြီ။"
         elif command in ("ban", "unban"):
             user_id = int(args[0])
             if user_id <= 0 or user_id in self.config.owners:
                 raise RuleError("Owner မဟုတ်တဲ့ positive user ID ရေးပါ။")
-            self.store.ban(user_id, command == "ban")
+            await self.store_call(self.store.ban, user_id, command == "ban")
             result = "✅ ပြင်ပြီးပါပြီ။ ယခင် bid များ ဆက်လက်အကျုံးဝင်ပါတယ်။"
         elif command == "banned":
-            rows = self.store.banned()
+            rows = await self.store_call(self.store.banned)
             result = "Banned IDs (ပထမ 100):\n" + ("\n".join(str(r) for r in rows) or "မရှိပါ။")
         elif command == "rules":
             if args:
                 value = " ".join(args)
                 if len(value) > 1000:
                     raise RuleError("Rules စာလုံး 1000 အထိသာ ရေးပါ။")
-                self.store.set("rules", value)
-            result = self.store.get("rules")
+                await self.store_call(self.store.set, "rules", value)
+            result = await self.store_call(self.store.get, "rules")
         elif command == "settings":
-            result = f'Wallet for new auctions: {"ON" if self.store.get("wallet_mode")=="1" else "OFF"}\nChannel: {self.store.get("channel_id") or "မသတ်မှတ်ရသေး"}\nAuction group: {self.store.get("group_id") or "မသတ်မှတ်ရသေး"}\nPvP group: {self.store.get("pvp_group_id") or "မသတ်မှတ်ရသေး"}\nIncrement: {money(int(self.store.get("increment")))}\nPaused: {self.store.get("paused")}\nCurrency: Coin · Owner USD rate: $100 = 500 coin\nBid edits: immediate; bursts wait for 2 quiet seconds\nOwners: {", ".join(map(str, sorted(self.config.owners)))}'
+            keys = ("wallet_mode", "increment", "paused")
+            values = await asyncio.gather(*(self.store_call(self.store.get, key) for key in keys))
+            wallet_mode, increment, paused = values
+            result = (f'Wallet for new auctions: {"ON" if wallet_mode=="1" else "OFF"}\n'
+                      f'Channel: {self.channel_id or "မသတ်မှတ်ရသေး"}\n'
+                      f'Auction group: {self.group_id or "မသတ်မှတ်ရသေး"}\n'
+                      f'PvP group: {self.pvp_group_id or "မသတ်မှတ်ရသေး"}\n'
+                      f'Increment: {money(int(increment))}\nPaused: {paused}\n'
+                      'Currency: Coin · Owner USD rate: $100 = 500 coin\n'
+                      'Bid edits: immediate; bursts wait for 2 quiet seconds\n'
+                      f'Owners: {", ".join(map(str, sorted(self.config.owners)))}')
         elif command == "auctions":
-            result = "နောက်ဆုံး လေလံ 30:\n" + ("\n".join(f'#{r["id"]} {r["status"]} • {r["name"]}' for r in self.store.listing()) or "မရှိသေးပါ။")
+            rows = await self.store_call(self.store.listing)
+            result = "နောက်ဆုံး လေလံ 30:\n" + ("\n".join(f'#{r["id"]} {r["status"]} • {r["name"]}' for r in rows) or "မရှိသေးပါ။")
         elif command == "view":
-            row = self.store.auction(int(args[0]))
+            row = await self.store_call(self.store.auction, int(args[0]))
             await message.reply_photo(row["photo"], caption=caption(row), parse_mode="HTML")
             return
         elif command in ("close", "cancelauction"):
-            self.store.finish(int(args[0]), "closed" if command == "close" else "cancelled")
+            await self.store_call(self.store.finish, int(args[0]),
+                                  "closed" if command == "close" else "cancelled")
             result = "✅ ပိတ်ပြီးပါပြီ။ Channel post ကို နောက် update မှာ ပြင်ပေးပါမယ်။"
         elif command == "extend":
-            self.store.extend(int(args[0]), int(args[1]))
+            await self.store_call(self.store.extend, int(args[0]), int(args[1]))
             result = "✅ End time တိုးပြီးပါပြီ။"
         elif command == "bids":
-            rows = self.store.history(int(args[0]))
+            rows = await self.store_call(self.store.history, int(args[0]))
             result = "နောက်ဆုံး bids 30:\n" + ("\n".join(f'{money(r["amount"])} • {r["user_id"]} • {date_text(r["created"])}' for r in rows) or "မရှိသေးပါ။")
         elif command == "export":
             auction_id = int(args[0])
-            self.store.auction(auction_id)
+            await self.store_call(self.store.auction, auction_id)
             data = io.StringIO()
             writer = csv.writer(data)
             writer.writerow(["bid_id", "auction_id", "user_id", "amount_coin", "created_utc"])
             # Numeric identifiers only: user names cannot inject spreadsheet formulas.
-            for r in self.store.export_bids(auction_id):
+            rows = await self.store_call(lambda: list(self.store.export_bids(auction_id)))
+            for r in rows:
                 writer.writerow([r["id"], auction_id, r["user_id"], f'{r["amount"] // 100}.{r["amount"] % 100:02d}', date_text(r["created"])])
             await message.reply_document(io.BytesIO(data.getvalue().encode("utf-8")), filename=f"auction-{auction_id}-bids.csv")
             return
         elif command == "stats":
-            rows, total, sales = self.store.stats()
+            rows, total, sales = await self.store_call(self.store.stats)
             result = "📊 Auctions\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows) + f"\nBids: {total}\nWinning bids (payment မစစ်ရသေး): {money(sales)}"
         else:
             raise RuleError("/panel မှာ command စာရင်းကြည့်ပါ။")
@@ -782,14 +817,15 @@ class AuctionBot:
             }
             await message.reply_text(prompts[action])
         elif action == "preview":
-            await welcome.send(message, welcome.load(self.store), user, context.bot)
+            value = await self.store_call(welcome.load, self.store)
+            await welcome.send(message, value, user, context.bot)
         elif action == "help":
             await message.reply_text(welcome.HELP)
         elif action == "cancel":
             context.user_data.pop("welcome_edit", None)
             await message.reply_text("Welcome ပြင်ဆင်ခြင်း ရပ်ပြီးပါပြီ။")
         elif action in {"clearphoto", "clearbuttons"}:
-            value = welcome.load(self.store)
+            value = await self.store_call(welcome.load, self.store)
             value["photo" if action == "clearphoto" else "buttons"] = None if action == "clearphoto" else []
             await self.save_welcome(message, value, user, context)
 
@@ -800,13 +836,13 @@ class AuctionBot:
             await welcome.send(message, value, user, context.bot)
         except TelegramError:
             raise RuleError("Preview ပို့မရလို့ မသိမ်းရသေးပါ။ ပုံ၊ HTML format၊ URL တွေကို စစ်ပြီး ပြန်ပို့ပါ။ /welcomehelp")
-        welcome.save(self.store, value)
+        await self.store_call(welcome.save, self.store, value)
         context.user_data.pop("welcome_edit", None)
         await message.reply_text("✅ အပေါ်က preview အတိုင်း သိမ်းပြီးပါပြီ။ User တွေ နောက် /start ပို့တဲ့အခါ ပြပေးပါမယ်။")
 
     async def welcome_input(self, message, user, context):
         mode = context.user_data["welcome_edit"]
-        value = welcome.load(self.store)
+        value = await self.store_call(welcome.load, self.store)
         if mode == "photo":
             if not message.photo:
                 raise RuleError("Photo အဖြစ်ပို့ပါ။ /welcomecancel နဲ့ရပ်နိုင်ပါတယ်။")
@@ -852,7 +888,11 @@ class AuctionBot:
 
     async def preview(self, message, draft):
         draft["step"] = "confirm"
-        row = dict(draft, id="DRAFT", increment=int(self.store.get("increment")), wallet_required=int(self.store.get("wallet_mode")))
+        increment, wallet_mode = await asyncio.gather(
+            self.store_call(self.store.get, "increment"),
+            self.store_call(self.store.get, "wallet_mode"),
+        )
+        row = dict(draft, id="DRAFT", increment=int(increment), wallet_required=int(wallet_mode))
         await message.reply_photo(draft["photo"], caption=caption(row), parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [button("✅ Publish", f'publish:{draft["nonce"]}', "success"),
@@ -874,11 +914,13 @@ class AuctionBot:
                     percent = secrets.randbelow(98) + 1
                     if percent >= 50:
                         percent += 1
-                    game = self.store.accept_pvp(game_id, update.effective_user.id, percent)
+                    game = await self.store_call(self.store.accept_pvp, game_id,
+                                                 update.effective_user.id, percent)
                     await query.answer("PvP ပွဲ စတင်ပါပြီ။")
                     await query.edit_message_text(pvp_animation_text(game), parse_mode="HTML")
                 elif action == "cancel":
-                    game = self.store.cancel_pvp(game_id, update.effective_user.id)
+                    game = await self.store_call(self.store.cancel_pvp, game_id,
+                                                 update.effective_user.id)
                     await query.answer("PvP request ကို ပယ်ချ/ဖျက်သိမ်းပြီးပါပြီ။")
                     await query.edit_message_text(
                         f'❌ PvP request ကို ဖျက်သိမ်းပြီးပါပြီ။\n{pvp_name(game["requester_id"],game["requester_name"])} · '
@@ -929,6 +971,8 @@ class AuctionBot:
                 await query.answer()
             except (RuleError, ValueError) as exc:
                 await query.answer(str(exc) if isinstance(exc, RuleError) else "Page မမှန်ပါ။ /menu ကိုပြန်ဖွင့်ပါ။", show_alert=True)
+            except PyMongoError:
+                await query.answer("Database ယာယီမရနိုင်ပါ။ ခဏနေ ပြန်စမ်းပါ။", show_alert=True)
             except BadRequest as exc:
                 if "message is not modified" in str(exc).lower():
                     await query.answer()
@@ -965,19 +1009,23 @@ class AuctionBot:
             if kind != "publish":
                 return
             await self.linked(context.bot)
-            auction_id = self.store.create(draft)
+            auction_id = await self.store_call(self.store.create, draft)
             context.user_data.pop("draft", None)
-            row = self.store.auction(auction_id)
+            row = await self.store_call(self.store.auction, auction_id)
             try:
                 post = await context.bot.send_photo(row["channel_id"], row["photo"], caption=caption(row), parse_mode="HTML")
             except TelegramError:
                 await query.message.reply_text(f"⚠️ #{auction_id} publication မသေချာပါ။ ထပ်မတင်သေးပါနှင့်။ Channel စစ်ပါ။ Auto-forward ရရင် bot ကပြန်ချိတ်ပါမယ်။ Post မရှိတာသေချာမှ /cancelauction {auction_id} နဲ့ပိတ်ပြီး အသစ်တင်ပါ။")
                 return
-            self.store.published(auction_id, post.message_id, int(post.date.timestamp()))
-            self.store.rendered(auction_id, row["version"])
-            await query.message.reply_text(f"✅ Auction #{auction_id} တင်ပြီးပါပြီ။\n" + self.store.get("rules"))
+            await self.store_call(self.store.published, auction_id, post.message_id,
+                                  int(post.date.timestamp()))
+            await self.store_call(self.store.rendered, auction_id, row["version"])
+            rules = await self.store_call(self.store.get, "rules")
+            await query.message.reply_text(f"✅ Auction #{auction_id} တင်ပြီးပါပြီ။\n" + rules)
         except (RuleError, ValueError) as exc:
             await query.message.reply_text(str(exc) if isinstance(exc, RuleError) else "လုပ်ဆောင်ချက် မမှန်ပါ။ /panel ကိုပြန်ဖွင့်ပါ။")
+        except PyMongoError:
+            await query.message.reply_text("Database ယာယီမရနိုင်ပါ။ ခဏနေ ပြန်စမ်းပါ။")
         except TelegramError:
             log.warning("Owner Telegram request failed")
             await query.message.reply_text("Telegram request မအောင်မြင်ပါ။ /check နှင့် /auctions ကိုစစ်ပါ။")
@@ -992,11 +1040,12 @@ class AuctionBot:
         self.bid_edit_due[auction_id] = now + 2 if recent_bid or recent_edit else now
 
     async def announce_winners(self, context):
-        for row in self.store.pending_winners():
+        rows = await self.store_call(self.store.pending_winners)
+        for row in rows:
             if time.monotonic() < self.winner_retry_after.get(row["id"], 0):
                 continue
             # Never fall back to a different group or its general chat.
-            if str(row["group_id"]) != self.store.get("group_id"):
+            if str(row["group_id"]) != self.group_id:
                 continue
             url = account.post_link(row)
             if not url:
@@ -1026,15 +1075,16 @@ class AuctionBot:
                 self.winner_retry_after[row["id"]] = time.monotonic() + 30
                 log.warning("Winner announcement failed for auction %s; retry in 30s", row["id"])
                 continue
-            self.store.winner_notified(row["id"])
+            await self.store_call(self.store.winner_notified, row["id"])
             self.winner_retry_after.pop(row["id"], None)
 
     async def tick(self, context):
         async with self.tick_lock:
-            self.store.close_due()
+            await self.store_call(self.store.close_due)
             if time.monotonic() < self.global_edit_after:
                 return
-            for row in self.store.dirty():
+            rows = await self.store_call(self.store.dirty)
+            for row in rows:
                 if time.monotonic() < self.edit_after.get(row["id"], 0):
                     continue
                 if row["status"] == "active" and time.monotonic() < self.bid_edit_due.get(row["id"], 0):
@@ -1047,7 +1097,7 @@ class AuctionBot:
                     return
                 except BadRequest as exc:
                     if "message is not modified" in str(exc).lower():
-                        self.store.rendered(row["id"], row["version"])
+                        await self.store_call(self.store.rendered, row["id"], row["version"])
                         self.last_caption_at[row["id"]] = time.monotonic()
                     else:
                         self.edit_after[row["id"]] = time.monotonic() + 60
@@ -1057,7 +1107,7 @@ class AuctionBot:
                     self.edit_after[row["id"]] = time.monotonic() + 15
                     log.warning("Caption update failed for auction %s; retry in 15s", row["id"])
                     continue
-                self.store.rendered(row["id"], row["version"])
+                await self.store_call(self.store.rendered, row["id"], row["version"])
                 self.edit_after.pop(row["id"], None)
                 self.last_caption_at[row["id"]] = time.monotonic()
 
@@ -1065,9 +1115,10 @@ class AuctionBot:
             await self.tick_pvp(context)
 
     async def tick_pvp(self, context):
-        for due in self.store.due_pvp():
+        due_rounds = await self.store_call(self.store.due_pvp)
+        for due in due_rounds:
             try:
-                game = self.store.advance_pvp(due["id"])
+                game = await self.store_call(self.store.advance_pvp, due["id"])
                 await context.bot.edit_message_text(
                     chat_id=game["group_id"], message_id=game["message_id"],
                     text=pvp_animation_text(game), parse_mode="HTML")
@@ -1077,7 +1128,8 @@ class AuctionBot:
             except (RuleError, PyMongoError, TelegramError):
                 log.warning("PvP animation/settlement update failed for round %s", due["id"])
         now = time.monotonic()
-        for game in self.store.pending_pvp_slot_notifications():
+        notifications = await self.store_call(self.store.pending_pvp_slot_notifications)
+        for game in notifications:
             if now < self.pvp_slot_retry_after.get(game["id"], 0):
                 continue
             try:
@@ -1093,7 +1145,7 @@ class AuctionBot:
             except PyMongoError:
                 log.warning("PvP notification state unavailable for round %s", game["id"])
             else:
-                self.store.mark_pvp_slot_notified(game["id"])
+                await self.store_call(self.store.mark_pvp_slot_notified, game["id"])
                 self.pvp_slot_retry_after.pop(game["id"], None)
 
     async def error(self, update, context):
@@ -1105,8 +1157,8 @@ class AuctionBot:
             (BotCommandScopeDefault(), USER_COMMANDS),
             (BotCommandScopeAllPrivateChats(), USER_COMMANDS),
         ]
-        auction_group = self.store.get("group_id")
-        pvp_group = self.store.get("pvp_group_id")
+        auction_group = self.group_id
+        pvp_group = self.pvp_group_id
         if auction_group and auction_group != pvp_group:
             scopes.append((BotCommandScopeChat(int(auction_group)), AUCTION_GROUP_COMMANDS))
         if pvp_group:
@@ -1133,12 +1185,15 @@ class AuctionBot:
         self.store.close()
 
     def application(self):
-        app = Application.builder().token(self.config.token).concurrent_updates(False).post_init(self.configure_menu).post_shutdown(self.shutdown).build()
+        app = (Application.builder().token(self.config.token)
+               .concurrent_updates(UPDATE_CONCURRENCY)
+               .post_init(self.configure_menu).post_shutdown(self.shutdown).build())
         app.add_handler(MessageHandler(filters.ALL, self.message))
         app.add_handler(CallbackQueryHandler(self.callback))
         app.add_handler(InlineQueryHandler(self.inline_search))
         app.add_error_handler(self.error)
-        app.job_queue.run_repeating(self.tick, interval=0.25, first=1, job_kwargs={"max_instances": 1, "coalesce": True})
+        app.job_queue.run_repeating(self.tick, interval=WORKER_TICK_INTERVAL_SECONDS,
+                                    first=1, job_kwargs={"max_instances": 1, "coalesce": True})
         return app
 
 
