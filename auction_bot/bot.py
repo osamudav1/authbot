@@ -466,7 +466,7 @@ class AuctionBot:
                 return
             if self.pvp_group(update):
                 if command == "author":
-                    await self.auther_command(message, context)
+                    await self.author_command(message)
                 elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
                 elif command == "bal":
@@ -635,6 +635,12 @@ class AuctionBot:
                                                      message_id=row["post_id"],
                                                      reply_markup=markup)
         await message.reply_text(f'✅ နောက်ဆုံးလေလံပုံ #{row["id"]} အောက်မှာ Inline search ခလုတ်တပ်ပြီးပါပြီ။')
+
+    async def author_command(self, message):
+        text, markup = await self.store_call(
+            account.active, self.store, 0, inline_enabled=True, button_label="🔎 Search Auth")
+        await message.reply_text(text, parse_mode="HTML", reply_markup=markup,
+                                 disable_web_page_preview=True)
 
     async def user_command(self, command, args, message, user, *, edit=False, content_page=0):
         if (command != "auctions" and args) or (command == "auctions" and len(args)>1):

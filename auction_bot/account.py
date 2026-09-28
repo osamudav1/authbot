@@ -98,12 +98,12 @@ def history(store, user_id, wins=False):
     return "\n".join(lines)
 
 
-def active(store, page=0, inline_enabled=True):
+def active(store, page=0, inline_enabled=True, button_label="🔎 Inline search"):
     if type(page) is not int or not 0 <= page <= 1000000:
         raise RuleError("Page နံပါတ် မမှန်ပါ။")
     count, _, _ = store.active_auctions(0, now=int(time.time()))
     text = f"🎴 Active auctions — {count} ခု\n\nအောက်က Search button ကိုနှိပ်၍ လေလံကဒ်များကြည့်ပါ။"
-    search_button = (InlineKeyboardButton("🔎 Inline search", switch_inline_query_current_chat="", api_kwargs={"style":"primary"})
+    search_button = (InlineKeyboardButton(button_label, switch_inline_query_current_chat="", api_kwargs={"style":"primary"})
                      if inline_enabled else button("🔎 Inline search", "inlinehelp:0"))
     return text, InlineKeyboardMarkup([[search_button], [button("⬅️ Back", "menu")]])
 
