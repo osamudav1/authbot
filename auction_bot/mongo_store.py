@@ -5,7 +5,7 @@ import random
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
-from .domain import MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
+from .domain import BOOM_TURN_TIMEOUT_SECONDS, MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
 
 
 class MongoStore:
@@ -435,7 +435,7 @@ class MongoStore:
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="boom_stake",note=f"Boom stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"boom:{game_id}:stake:{uid}",created=at),session=s)
             size=random.choice((6,9)); positions=random.sample(range(1,size+1),2)
             owners={str(positions[0]):row["requester_id"],str(positions[1]):row["target_id"]}
-            self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","board_size":size,"boom_positions":positions,"boom_owners":owners,"revealed":[],"turn_id":row["requester_id"]}},session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","board_size":size,"boom_positions":positions,"boom_owners":owners,"revealed":[],"turn_id":row["requester_id"],"turn_at":at}},session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(accept)
 
@@ -457,9 +457,27 @@ class MongoStore:
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom prize · {game_id}",actor_id=None,auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
                 self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"last_click":number},"$addToSet":{"revealed":number}},session=s)
             else:
-                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"],"last_click":number}},session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"],"turn_at":at,"last_click":number}},session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(pick)
+
+    def timeout_boom(self, now=None):
+        at=time.time() if now is None else now
+        def settle(s):
+            rows=list(self.db.boom_games.find({"status":"running","turn_at":{"$lte":at-BOOM_TURN_TIMEOUT_SECONDS}},session=s))
+            finished=[]
+            for row in rows:
+                winner=row["target_id"] if row["turn_id"]==row["requester_id"] else row["requester_id"]
+                pot=row["amount"]*2
+                result=self.db.boom_games.update_one({"_id":row["_id"],"status":"running"},{"$set":{"status":"finished","winner_id":winner,"timeout":1}},session=s)
+                if not result.modified_count: continue
+                self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":pot}},session=s)
+                eid=self._next("wallet_events",s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom timeout prize · {row['_id']}",actor_id=None,auction_id=None,event_key=f"boom:{row['_id']}:prize",created=at),session=s)
+                row["status"]="finished"; row["winner_id"]=winner; row["timeout"]=1
+                finished.append(self._clean(row))
+            return finished
+        return self._tx(settle)
 
     def boom_top(self, limit=10):
         rows=list(self.db.wallets.find().sort("balance",-1).limit(limit))

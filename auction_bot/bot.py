@@ -238,7 +238,8 @@ def boom_text(game):
     if game.get("status") == "finished":
         winner=game.get("winner_id")
         name=game["requester_name"] if winner==game["requester_id"] else game["target_name"]
-        return text + f'🏆 Winner: {pvp_name(winner,name)}\n🪙 Prize: {money(game["amount"]*2)}\n🫆 Last Click - {game.get("last_click", "-")}'
+        timeout_note='\n⏱️ 1min မနှိပ်သဖြင့် auto win' if game.get("timeout") else ''
+        return text + f'🏆 Winner: {pvp_name(winner,name)}\n🪙 Prize: {money(game["amount"]*2)}{timeout_note}\n🫆 Last Click - {game.get("last_click", "-")}'
     turn=game.get("turn_id")
     name=game["requester_name"] if turn==game["requester_id"] else game["target_name"]
     return text + f'🎯 Turn: {pvp_name(turn,name)}\nButton တစ်ခုရွေးပါ။'
@@ -1313,6 +1314,14 @@ class AuctionBot:
                           f'{pvp_name(game["target_id"],game["target_name"])}'), parse_mode="HTML")
             except TelegramError:
                 log.warning("Expired Boom request message update failed for round %s", game["id"])
+        timed_out_boom = await self.store_call(self.store.timeout_boom)
+        for game in timed_out_boom:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=game["group_id"], message_id=game["message_id"],
+                    text=boom_text(game), parse_mode="HTML", reply_markup=boom_markup(game))
+            except TelegramError:
+                log.warning("Boom turn timeout message update failed for round %s", game["id"])
         due_rounds = await self.store_call(self.store.due_pvp)
         for due in due_rounds:
             try:
