@@ -267,11 +267,11 @@ class PvPStoreTests(unittest.TestCase):
         self.assertIn("500coin", fake.sent[0]["text"])
         self.assertIn("600coin", fake.sent[0]["text"])
 
-    def test_pvp_wager_below_500_coins_is_rejected(self):
+    def test_pvp_wager_below_250_coins_is_rejected(self):
         self.credit(1)
         self.credit(2)
-        with self.assertRaisesRegex(RuleError, "အနည်းဆုံးလောင်းကြေး 500 coin"):
-            self.store.create_pvp("too-small", -100123, 1, "Player 1", 2, "Player 2", cents("499"))
+        with self.assertRaisesRegex(RuleError, "အနည်းဆုံးလောင်းကြေး 250 coin"):
+            self.store.create_pvp("too-small", -100123, 1, "Player 1", 2, "Player 2", cents("249"))
 
 
 if __name__ == "__main__":

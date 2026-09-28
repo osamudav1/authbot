@@ -6,7 +6,7 @@ class RuleError(ValueError):
     pass
 
 
-MIN_PVP_WAGER = 50_000  # 500 coins, represented as 100 internal subunits per coin.
+MIN_PVP_WAGER = 25_000  # 250 coins, represented as 100 internal subunits per coin.
 PVP_REQUEST_TIMEOUT_SECONDS = 15
 USD_TO_COIN_RATE = 5  # $100 = 500 coins.
 

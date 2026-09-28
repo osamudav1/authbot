@@ -599,7 +599,7 @@ class AuctionBot:
             raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
         amount = cents(args[0])
         if amount < MIN_PVP_WAGER:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 500 coin ဖြစ်ရပါမယ်။")
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
         game_id = secrets.token_hex(8)
         game = await self.store_call(self.store.create_pvp, game_id, message.chat_id,
                                      user.id, user.full_name, target.id, target.full_name, amount)

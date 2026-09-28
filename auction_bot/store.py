@@ -377,7 +377,7 @@ class Store:
                    target_id, target_name, amount, now=None):
         now = int(time.time()) if now is None else int(now)
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 500 coin ဖြစ်ရပါမယ်။")
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
         if requester_id == target_id:
             raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
         with self.transaction():
