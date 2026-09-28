@@ -39,9 +39,9 @@ class Config:
         database = os.getenv("MONGODB_DATABASE", "authbid_bot").strip()
         if not database or any(c in database for c in '/\\. "$*<>:|?') or len(database.encode())>63:
             raise ValueError("MONGODB_DATABASE is invalid")
-        org_uri = os.getenv("ORG_MONGO_URI", "").strip()
-        if not org_uri.startswith(("mongodb://", "mongodb+srv://")):
-            raise ValueError("Set ORG_MONGO_URI to the protected org wallet MongoDB connection string")
+        # One MongoDB connection is used for both databases; only the database
+        # and wallet field are separated below.
+        org_uri = uri
         org_database = os.getenv("ORG_MONGO_DB", "").strip()
         if not org_database or any(c in org_database for c in '/\\. "$*<>:|?') or len(org_database.encode())>63:
             raise ValueError("ORG_MONGO_DB is invalid")
