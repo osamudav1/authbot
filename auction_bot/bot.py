@@ -1175,7 +1175,7 @@ class AuctionBot:
             try:
                 await context.bot.send_message(
                     chat_id=game["group_id"],
-                    text="✅ 1Round လူရှင်းပါပီ — ပွဲအသစ်တစ်ပွဲ စတင်နိုင်ပါပြီ။")
+                    text="✅ 1Round Can Be Start")
             except RetryAfter as exc:
                 delay = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else exc.retry_after
                 self.pvp_slot_retry_after[game["id"]] = now + delay + 1

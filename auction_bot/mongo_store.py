@@ -400,7 +400,8 @@ class MongoStore:
             if actor_id!=row["target_id"]:raise RuleError("Request လက်ခံနိုင်သူက ဖိတ်ခေါ်ခံရသူတစ်ဦးတည်းပါ။")
             if row["status"]!="pending":raise RuleError("ဒီ PvP request ကို အရင်ဖြေပြီးပါပြီ။")
             if str(row["group_id"])!=str(self.get("pvp_group_id",session=s)):raise RuleError("ဒီ group မှာ PvP မကစားနိုင်တော့ပါ။")
-            if self.db.pvp_games.count_documents({"group_id":row["group_id"],"status":"running"},session=s)>=5:
+            active_rounds = self.db.pvp_games.count_documents({"group_id":row["group_id"],"status":"running"},session=s)
+            if active_rounds>=5:
                 raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
             for uid in (row["requester_id"],row["target_id"]):
                 if self.db.pvp_games.find_one({"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]},session=s):
@@ -413,7 +414,9 @@ class MongoStore:
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="pvp_stake",
                     note=f"PvP stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"pvp:{game_id}:stake:{uid}",created=at),session=s)
-            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+1,"step":0,"final_percent":final_percent}},session=s)
+            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+1,"step":0,"final_percent":final_percent,
+                # Only the fifth concurrent round can free a slot from a full set of five.
+                "slot_notified": 0 if active_rounds == 4 else 1}},session=s)
             return self._pvp_game(game_id,s)
         return self._tx(accept)
 
