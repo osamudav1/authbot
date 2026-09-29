@@ -68,6 +68,7 @@ USER_COMMANDS = [
     BotCommand("auctions", "ဖွင့်ထားသော လေလံများ"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
+    BotCommand("dailycoin", "နေ့စဉ် coin reward ရယူရန်"),
     BotCommand("transactions", "Coin အဝင်အထွက်မှတ်တမ်း"),
 ]
 AUCTION_GROUP_COMMANDS = [
@@ -89,6 +90,8 @@ PROMPTS = {
     "photo": "📷/🎥 Card photo သို့ video ပို့ပါ။ /draftcancel နဲ့ ရပ်နိုင်ပါတယ်။",
     "name": "Card name ရေးပါ (စာလုံး 60 အထိ)။",
     "anime": "Anime name ရေးပါ (စာလုံး 60 အထိ)။",
+    "card_type": "Type ရေးပါ (စာလုံး 24 အထိ)။",
+    "card_id": "Card ID ရေးပါ (စာလုံး 60 အထိ)။",
     "rarity": "Rarity ရေးပါ (ဥပမာ SSR, UR; စာလုံး 24 အထိ)။",
     "start": "Starting bid coin ပမာဏရေးပါ။ ဥပမာ 5.00",
     "duration_seconds": "တင်ပြီး ဘယ်လောက်ကြာရင် ပိတ်မလဲ? ကြာချိန်ကို စာပို့ပါ။ ဥပမာ 1sec, 5min, 1hours, 1day။ Publish တင်ပြီးမှ အချိန်စတွက်ပါမယ်။",
@@ -273,7 +276,7 @@ def caption(row, now=None):
     return (
         f'🎴WAIFU AUCTION #{row["id"]}\n{label}\n\n'
         f'┌─CHARACTER─────\n│ 👤 {esc(row["name"])}\n'
-        f'│ 🎬 Anime: {esc(row["anime"])}\n│ 💎 Rarity: {esc(row["rarity"])}\n└──────────────────\n\n'
+        f'│ 🎬 Anime: {esc(row["anime"])}\n│ 🏷 Type: {esc(row.get("card_type", ""))}\n│ 🆔 Card ID: {esc(row.get("card_id", ""))}\n│ 💎 Rarity: {esc(row["rarity"])}\n└──────────────────\n\n'
         f'🪙STARTING BID\n{money(row["start"])}\n\n📈MIN. INCREMENT\n{money(row["increment"])}\n\n'
         f'🔥CURRENT BID\n{current}\n\n{result}\n\n'
         f'⏳TIME LEFT\n{end_text}\n\n━━━━━━━━━━━━━━━━━━\n\n'
@@ -510,7 +513,7 @@ class AuctionBot:
                             log.warning("New-user notification state unavailable for user %s", update.effective_user.id)
                     value = await self.store_call(welcome.load, self.store)
                     await welcome.send(message, value, update.effective_user, context.bot)
-                elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
+                elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "dailycoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
             if self.pvp_group(update):
@@ -751,6 +754,18 @@ class AuctionBot:
                                                  inline_enabled=bool(message.get_bot().supports_inline_queries))
         elif command in {"balance", "bal", "bcoin"}:
             text = await self.store_call(account.balance, self.store, user.id)
+        elif command == "dailycoin":
+            result = await self.store_call(self.store.claim_dailycoin, user.id)
+            if result["claimed"]:
+                text = (f'🎁 Daily coin ရပါပြီ — <b>{money(result["reward"])}</b>\n\n'
+                        f'လက်ရှိသုံးနိုင် coin: <b>{money(result["available"])}</b>\n'
+                        'နောက်တစ်ကြိမ် 24 hours ပြည့်မှ ပြန်ယူနိုင်ပါမယ်။')
+            else:
+                remaining = max(0, int(result["remaining"]))
+                hours, remainder = divmod(remaining, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                text = (f'⏳ Daily coin ကို ထပ်ယူရန် <b>{hours} hours {minutes} minutes {seconds} sec</b> စောင့်ပါ။\n'
+                        '24 hours ပြည့်မှ တစ်ကြိမ် ထပ်ယူနိုင်ပါမယ်။')
         elif command == "transactions":
             text = await self.store_call(account.transactions, self.store, user.id)
         elif command == "close":
@@ -767,7 +782,7 @@ class AuctionBot:
             await message.reply_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
 
     async def owner_command(self, command, args, message, context):
-        if command in {"menu", "history", "wins", "balance", "bal", "transactions"}:
+        if command in {"menu", "history", "wins", "balance", "bal", "dailycoin", "transactions"}:
             await self.user_command(command, args, message, message.from_user)
             return
         no_args = {"zip", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
@@ -1005,8 +1020,8 @@ class AuctionBot:
                 draft["media_type"] = "video"
             else:
                 raise RuleError("Photo သို့ video အဖြစ်ပို့ပါ (document မဟုတ်ပါ)။")
-        elif step in ("name", "anime", "rarity"):
-            maximum = 24 if step == "rarity" else 60
+        elif step in ("name", "anime", "card_type", "card_id", "rarity"):
+            maximum = 24 if step in ("card_type", "rarity") else 60
             if not text or len(text) > maximum or any(ord(c) < 32 for c in text):
                 raise RuleError(f"တစ်ကြောင်းတည်း စာလုံး 1–{maximum} ရေးပါ။")
             draft[step] = text

@@ -48,6 +48,18 @@ class PvPStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(RuleError, "This User Playing"):
             self.request("busy", 3, 1)
 
+    def test_pending_request_locks_requester_and_target(self):
+        self.credit(1)
+        self.credit(2)
+        self.credit(3)
+        self.request("pending", 1, 2)
+        with self.assertRaisesRegex(RuleError, "ပွဲပြီး သို့မဟုတ် cancel"):
+            self.request("requester-busy", 1, 3)
+        with self.assertRaisesRegex(RuleError, "ပွဲပြီး သို့မဟုတ် cancel"):
+            self.request("target-busy", 3, 2)
+        self.store.cancel_pvp("pending", 1)
+        self.request("after-cancel", 1, 3)
+
     def test_winner_receives_pot_and_slot_notice_is_emitted_once(self):
         self.credit(1)
         self.credit(2)
@@ -98,6 +110,18 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(money(250_000), "2500coin")
         self.assertEqual(money(250_050), "2500.5coin")
         self.assertEqual(money(250_005), "2500.05coin")
+
+    def test_dailycoin_rewards_500_to_2000_and_locks_for_24_hours(self):
+        first = self.store.claim_dailycoin(77, now=1000)
+        self.assertTrue(first["claimed"])
+        self.assertGreaterEqual(first["reward"], cents("500"))
+        self.assertLessEqual(first["reward"], cents("2000"))
+        retry = self.store.claim_dailycoin(77, now=1000 + 86399)
+        self.assertFalse(retry["claimed"])
+        self.assertEqual(retry["remaining"], 1)
+        second = self.store.claim_dailycoin(77, now=1000 + 86400)
+        self.assertTrue(second["claimed"])
+        self.assertEqual(self.store.wallet_balance(77)["total"], first["reward"] + second["reward"])
 
     def test_responsiveness_settings_and_local_sqlite_thread_safety(self):
         self.assertEqual(UPDATE_CONCURRENCY, 16)

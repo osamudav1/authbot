@@ -110,6 +110,8 @@ class MongoStore:
             if not channel or not group: raise RuleError("/setchannel နှင့် /setgroup အရင်သတ်မှတ်ပါ။")
             aid=self._next("auctions",s)
             row={k:card[k] for k in ("photo","name","anime","rarity","start")}
+            row["card_type"] = card.get("card_type", "")
+            row["card_id"] = card.get("card_id", "")
             row["media_type"] = card.get("media_type", "photo")
             row.update(_id=aid,id=aid,increment=int(self.get("increment",session=s)),ends=ends,
                        channel_id=int(channel),group_id=int(group),post_id=None,root_id=None,
@@ -306,6 +308,28 @@ class MongoStore:
         return self._tx(adjust)
 
     def wallet_history(self,user_id):return [self._clean(r) for r in self.db.wallet_events.find({"user_id":user_id}).sort("id",-1).limit(10)]
+    def claim_dailycoin(self, user_id, now=None):
+        if type(user_id) is not int or not 0 < user_id < 2**63:
+            raise RuleError("User ID မမှန်ပါ။")
+        at = int(time.time()) if now is None else int(now)
+        def claim(s):
+            previous = self.db.daily_claims.find_one({"_id": user_id}, session=s)
+            if previous:
+                next_at = previous["claimed_at"] + 86400
+                if at < next_at:
+                    return {"claimed": False, "remaining": next_at - at}
+            reward = random.randint(500, 2000) * 100
+            balance = self.wallet_balance(user_id, s)
+            if balance["total"] + reward > 99999999999:
+                raise RuleError("Wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            self.db.wallets.update_one({"_id": user_id}, {"$inc": {"balance": reward}, "$set": {"user_id": user_id}}, upsert=True, session=s)
+            self.db.daily_claims.update_one({"_id": user_id}, {"$set": {"claimed_at": at, "reward": reward}}, upsert=True, session=s)
+            eid = self._next("wallet_events", s)
+            self.db.wallet_events.insert_one(dict(_id=eid, id=eid, user_id=user_id, delta=reward,
+                kind="dailycoin", note="Daily coin reward", actor_id=None, auction_id=None,
+                event_key=f"dailycoin:{user_id}:{at}", created=at), session=s)
+            return {"claimed": True, "reward": reward, "available": balance["available"] + reward}
+        return self._tx(claim)
 
     def transfer_coins(self,group_id,sender_id,recipient_id,amount,event_key):
         if (type(sender_id) is not int or type(recipient_id) is not int
@@ -343,6 +367,11 @@ class MongoStore:
         row=self.db.pvp_games.find_one({"_id":game_id},session=session)
         if not row:raise RuleError("PvP request မတွေ့ပါ။")
         return self._clean(row)
+    def _player_locked(self, group_id, user_id, session=None):
+        query={"group_id":group_id,"status":{"$in":["pending","running"]},
+               "$or":[{"requester_id":user_id},{"target_id":user_id}]}
+        return bool(self.db.pvp_games.find_one(query,session=session) or
+                    self.db.boom_games.find_one(query,session=session))
 
     def create_pvp(self,game_id,group_id,requester_id,requester_name,target_id,target_name,amount,now=None):
         if type(amount) is not int or not MIN_PVP_WAGER<=amount<=99999999999:raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
@@ -354,10 +383,8 @@ class MongoStore:
             if self.db.pvp_games.count_documents({"group_id":group_id,"status":"running"},session=s)>=5:
                 raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ပွဲအသစ်တောင်းနိုင်ပါတယ်။")
             for uid in (requester_id,target_id):
-                if self.db.pvp_games.find_one({"group_id":group_id,"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]},session=s):
-                    raise RuleError("This User Playing")
-            if self.db.pvp_games.find_one({"status":"pending","requester_id":requester_id},session=s):
-                raise RuleError("သင့်မှာ အဖြေမရသေးတဲ့ PvP request ရှိပါတယ်။")
+                if self._player_locked(group_id,uid,s):
+                    raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီး သို့မဟုတ် cancel ဖြစ်မှ ထပ်ခေါ်နိုင်ပါတယ်။")
             balance=self.wallet_balance(requester_id,s)
             if balance["available"]<amount:raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
             self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,requester_id=requester_id,
@@ -381,6 +408,9 @@ class MongoStore:
                 raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
             if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 2:
                 raise RuleError("လက်ရှိ Boom ပွဲ ၂ ပွဲ ကစားနေပါတယ်။")
+            for uid in (requester_id,target_id):
+                if self._player_locked(group_id,uid,s):
+                    raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီး သို့မဟုတ် cancel ဖြစ်မှ ထပ်ခေါ်နိုင်ပါတယ်။")
             balance = self.wallet_balance(requester_id, s)
             if balance["available"] < amount:
                 raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")

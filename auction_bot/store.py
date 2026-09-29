@@ -1,6 +1,7 @@
 """Legacy SQLite adapter retained only for import compatibility tests; production uses MongoDB."""
 import sqlite3
 import time
+import random
 from contextlib import contextmanager
 from pathlib import Path
 from .domain import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
@@ -17,7 +18,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS auctions(
           id INTEGER PRIMARY KEY, photo TEXT NOT NULL, name TEXT NOT NULL,
-          anime TEXT NOT NULL, rarity TEXT NOT NULL, start INTEGER NOT NULL,
+          anime TEXT NOT NULL, card_type TEXT NOT NULL DEFAULT '', card_id TEXT NOT NULL DEFAULT '',
+          rarity TEXT NOT NULL, start INTEGER NOT NULL,
           increment INTEGER NOT NULL, ends INTEGER NOT NULL,
           channel_id INTEGER NOT NULL, group_id INTEGER NOT NULL,
           post_id INTEGER, root_id INTEGER, status TEXT NOT NULL DEFAULT 'publishing',
@@ -33,6 +35,8 @@ class Store:
         CREATE INDEX IF NOT EXISTS active_by_deadline ON auctions(status,ends);
         CREATE TABLE IF NOT EXISTS wallets(
           user_id INTEGER PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0 CHECK(balance>=0));
+        CREATE TABLE IF NOT EXISTS daily_claims(
+          user_id INTEGER PRIMARY KEY, claimed_at INTEGER NOT NULL, reward INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS holds(
           auction_id INTEGER PRIMARY KEY REFERENCES auctions(id),
           user_id INTEGER NOT NULL REFERENCES wallets(user_id), amount INTEGER NOT NULL CHECK(amount>0));
@@ -71,6 +75,10 @@ class Store:
             self.db.execute("ALTER TABLE auctions ADD COLUMN duration_seconds INTEGER")
         if "wallet_required" not in columns:
             self.db.execute("ALTER TABLE auctions ADD COLUMN wallet_required INTEGER NOT NULL DEFAULT 0")
+        if "card_type" not in columns:
+            self.db.execute("ALTER TABLE auctions ADD COLUMN card_type TEXT NOT NULL DEFAULT ''")
+        if "card_id" not in columns:
+            self.db.execute("ALTER TABLE auctions ADD COLUMN card_id TEXT NOT NULL DEFAULT ''")
         for key, value in [("wallet_mode", "0"), ("increment", "5000"), ("paused", "0"), ("rules", "Winner ကို owner က ဆက်သွယ်ပါမယ်။ Payment ကို owner နှင့် တိုက်ရိုက်ညှိပါ။")]:
             self.db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (key, value))
 
@@ -126,9 +134,9 @@ class Store:
         if not self.get("channel_id") or not self.get("group_id"):
             raise RuleError("/setchannel နှင့် /setgroup အရင်သတ်မှတ်ပါ။")
         cur = self.db.execute("""INSERT INTO auctions
-          (photo,name,anime,rarity,start,increment,ends,channel_id,group_id,created,duration_seconds,wallet_required)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (
-            card["photo"], card["name"], card["anime"], card["rarity"], card["start"],
+          (photo,name,anime,card_type,card_id,rarity,start,increment,ends,channel_id,group_id,created,duration_seconds,wallet_required)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            card["photo"], card["name"], card["anime"], card.get("card_type", ""), card.get("card_id", ""), card["rarity"], card["start"],
             int(self.get("increment")), ends, int(self.get("channel_id")),
             int(self.get("group_id")), now, duration, int(self.get("wallet_mode"))))
         return cur.lastrowid
@@ -327,6 +335,26 @@ class Store:
 
     def wallet_history(self, user_id):
         return [dict(row) for row in self.db.execute("SELECT * FROM wallet_events WHERE user_id=? ORDER BY id DESC LIMIT 10", (user_id,))]
+    def claim_dailycoin(self, user_id, now=None):
+        if type(user_id) is not int or not 0 < user_id < 2**63:
+            raise RuleError("User ID မမှန်ပါ။")
+        now = int(time.time()) if now is None else int(now)
+        with self.transaction():
+            previous = self.db.execute("SELECT claimed_at FROM daily_claims WHERE user_id=?", (user_id,)).fetchone()
+            if previous:
+                next_at = previous["claimed_at"] + 86400
+                if now < next_at:
+                    return {"claimed": False, "remaining": next_at - now}
+            reward = random.randint(500, 2000) * 100
+            balance = self.wallet_balance(user_id)
+            if balance["total"] + reward > 99999999999:
+                raise RuleError("Wallet ပမာဏအများဆုံး ကျော်နေပါတယ်။")
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (user_id,))
+            self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (reward, user_id))
+            self.db.execute("INSERT INTO daily_claims(user_id,claimed_at,reward) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET claimed_at=excluded.claimed_at,reward=excluded.reward", (user_id, now, reward))
+            self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,?,?,?,?,?)",
+                            (user_id, reward, "dailycoin", "Daily coin reward", None, f"dailycoin:{user_id}:{now}", now))
+            return {"claimed": True, "reward": reward, "available": balance["available"] + reward}
 
     def transfer_coins(self, group_id, sender_id, recipient_id, amount, event_key):
         if (type(sender_id) is not int or type(recipient_id) is not int
@@ -386,10 +414,11 @@ class Store:
             if self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (group_id,)).fetchone()[0] >= 5:
                 raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ပွဲအသစ်တောင်းနိုင်ပါတယ်။")
             for user_id in (requester_id, target_id):
-                if self.db.execute("SELECT 1 FROM pvp_games WHERE group_id=? AND status='running' AND (requester_id=? OR target_id=?) LIMIT 1", (group_id,user_id,user_id)).fetchone():
-                    raise RuleError("This User Playing")
-            if self.db.execute("SELECT 1 FROM pvp_games WHERE status='pending' AND requester_id=? LIMIT 1", (requester_id,)).fetchone():
-                raise RuleError("သင့်မှာ အဖြေမရသေးတဲ့ PvP request ရှိပါတယ်။")
+                locked = self.db.execute("SELECT status FROM pvp_games WHERE group_id=? AND status IN ('pending','running') AND (requester_id=? OR target_id=?) LIMIT 1", (group_id,user_id,user_id)).fetchone()
+                if locked:
+                    if locked[0] == "running":
+                        raise RuleError("This User Playing")
+                    raise RuleError("ဒီ user က PvP request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီး သို့မဟုတ် cancel ဖြစ်မှ ထပ်ခေါ်နိုင်ပါတယ်။")
             balance = self.wallet_balance(requester_id)
             if balance["available"] < amount:
                 raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
