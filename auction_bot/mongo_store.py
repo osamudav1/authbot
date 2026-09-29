@@ -561,6 +561,10 @@ class MongoStore:
             if row["status"] != "pending": raise RuleError("ဒီ Boom request ကို အရင်ဖြေပြီးပါပြီ။")
             if str(row["group_id"]) != str(self.get("pvp_group_id",session=s)): raise RuleError("ဒီ group မှာ Boom မကစားနိုင်တော့ပါ။")
             for uid in (row["requester_id"],row["target_id"]):
+                active_query={"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]}
+                if (self.db.pvp_games.find_one(active_query,session=s)
+                        or self.db.boom_games.find_one(active_query,session=s)):
+                    raise RuleError("This User Playing")
                 balance=self.wallet_balance(uid,s)
                 if balance["available"] < row["amount"]: raise RuleError(f"User {uid} မှာ coin မလုံလောက်ပါ။")
             for uid in (row["requester_id"],row["target_id"]):
@@ -690,7 +694,9 @@ class MongoStore:
             if active_rounds>=5:
                 raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
             for uid in (row["requester_id"],row["target_id"]):
-                if self.db.pvp_games.find_one({"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]},session=s):
+                active_query={"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]}
+                if (self.db.pvp_games.find_one(active_query,session=s)
+                        or self.db.boom_games.find_one(active_query,session=s)):
                     raise RuleError("This User Playing")
                 balance=self.wallet_balance(uid,s)
                 if balance["available"]<row["amount"]:raise RuleError(f"User {uid} မှာ လိုအပ်တဲ့ coin မလုံလောက်ပါ။")
