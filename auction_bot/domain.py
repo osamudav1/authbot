@@ -7,6 +7,8 @@ class RuleError(ValueError):
 
 
 MIN_PVP_WAGER = 25_000  # 250 coins, represented as 100 internal subunits per coin.
+MAX_PVP_WAGER = 3_000_000  # 30000 coins.
+MAX_OWNER_ADJUSTMENT_USD_SUBUNITS = 250_000  # $2500.
 MAX_ACTIVE_PVP_GAMES = 3
 PVP_REQUEST_TIMEOUT_SECONDS = 15
 BOOM_TURN_TIMEOUT_SECONDS = 60

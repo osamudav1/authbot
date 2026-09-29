@@ -5,7 +5,7 @@ import random
 from pymongo import MongoClient, ReturnDocument
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
-from .domain import BOOM_TURN_TIMEOUT_SECONDS, MAX_ACTIVE_PVP_GAMES, MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
+from .domain import BOOM_TURN_TIMEOUT_SECONDS, MAX_ACTIVE_PVP_GAMES, MAX_PVP_WAGER, MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
 
 PVP_ANIMATION_INTERVAL_SECONDS = 1.2
 
@@ -407,7 +407,7 @@ class MongoStore:
                 + self.db.boom_games.count_documents({"group_id":group_id,"status":"running"},session=session))
 
     def create_pvp(self,game_id,group_id,requester_id,requester_name,target_id,target_name,amount,now=None):
-        if type(amount) is not int or not MIN_PVP_WAGER<=amount<=99999999999:raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER<=amount<=MAX_PVP_WAGER:raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if requester_id==target_id:raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
         def create(s):
             at=time.time() if now is None else now
@@ -432,8 +432,8 @@ class MongoStore:
                                      {"$set":{"message_id":message_id}})
 
     def start_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
             raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         def start(s):
@@ -465,8 +465,8 @@ class MongoStore:
         return self._tx(start)
 
     def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
             raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         def play(s):
@@ -501,8 +501,8 @@ class MongoStore:
         return self._tx(play)
 
     def create_solo_boom(self, game_id, group_id, requester_id, requester_name, amount, now=None):
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("Boom လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         def create(s):
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
@@ -529,8 +529,8 @@ class MongoStore:
         return self._tx(create)
 
     def create_boom(self, game_id, group_id, requester_id, requester_name, target_id, target_name, amount, now=None):
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("Boom လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if requester_id == target_id:
             raise RuleError("ကိုယ့်ကိုယ်ကို Boom request လုပ်လို့မရပါ။")
         def create(s):

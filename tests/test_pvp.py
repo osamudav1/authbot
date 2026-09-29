@@ -111,6 +111,16 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(money(250_050), "2500.5coin")
         self.assertEqual(money(250_005), "2500.05coin")
 
+    def test_pvp_wager_maximum_is_30000_coins(self):
+        self.credit(1, cents("30001"))
+        with self.assertRaisesRegex(RuleError, "30000"):
+            self.store.play_solo_pvp("too-large", -100123, 1, "Player 1", cents("30001"), "heads", "tails", now=100)
+
+    def test_owner_adjustment_maximum_is_2500_usd(self):
+        message = SimpleNamespace(reply_to_message=SimpleNamespace(sender_chat=None, from_user=SimpleNamespace(id=77, is_bot=False)))
+        with self.assertRaisesRegex(RuleError, "2500"):
+            auth_adjustment(["+$2501"], message)
+
     def test_dailycoin_rewards_500_to_2000_and_locks_for_24_hours(self):
         first = self.store.claim_dailycoin(77, now=1000)
         self.assertTrue(first["claimed"])
@@ -350,7 +360,7 @@ class PvPStoreTests(unittest.TestCase):
     def test_pvp_wager_below_250_coins_is_rejected(self):
         self.credit(1)
         self.credit(2)
-        with self.assertRaisesRegex(RuleError, "အနည်းဆုံးလောင်းကြေး 250 coin"):
+        with self.assertRaisesRegex(RuleError, "30000"):
             self.store.create_pvp("too-small", -100123, 1, "Player 1", 2, "Player 2", cents("249"))
 
 

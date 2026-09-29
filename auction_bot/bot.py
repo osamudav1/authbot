@@ -19,7 +19,7 @@ from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, 
 from . import account, welcome
 from .config import Config
 from .source_export import source_zip
-from .domain import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
+from .domain import MAX_OWNER_ADJUSTMENT_USD_SUBUNITS, MAX_PVP_WAGER, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
 from .mongo_store import MongoStore
 from pymongo.errors import PyMongoError
 
@@ -129,6 +129,8 @@ def auth_adjustment(args, message):
     else:
         raise RuleError(AUTH_USAGE)
     amount = usd_to_coins(value)
+    if amount > MAX_OWNER_ADJUSTMENT_USD_SUBUNITS * USD_TO_COIN_RATE:
+        raise RuleError("Owner +/− ပမာဏကို $2500 ထက် မကျော်စေရပါ။")
     return user_id, amount if sign=="+" else -amount, note
 
 
@@ -728,8 +730,8 @@ class AuctionBot:
             choice = {"h": "heads", "heads": "heads", "t": "tails", "tails": "tails"}.get(args[1].lower())
             if not choice:
                 raise RuleError("Solo PvP အတွက် /pvp 250 h သို့ /pvp 250 t ပုံစံရေးပါ။ h=Heads, t=Tails")
-            if amount < MIN_PVP_WAGER:
-                raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+            if not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+                raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
             result = secrets.choice(("heads", "tails"))
             game_id = secrets.token_hex(8)
             game = await self.store_call(self.store.play_solo_pvp, game_id, message.chat_id,
@@ -745,8 +747,8 @@ class AuctionBot:
         if target.id == user.id:
             raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
         amount = cents(args[0])
-        if amount < MIN_PVP_WAGER:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         game_id = secrets.token_hex(8)
         game = await self.store_call(self.store.create_pvp, game_id, message.chat_id,
                                      user.id, user.full_name, target.id, target.full_name, amount)
@@ -781,6 +783,8 @@ class AuctionBot:
         reply=message.reply_to_message
         target=reply.from_user if reply and not reply.sender_chat else None
         amount=cents(args[0])
+        if not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("Boom လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if not target:
             game_id=secrets.token_hex(8)
             game=await self.store_call(self.store.create_solo_boom,game_id,message.chat_id,

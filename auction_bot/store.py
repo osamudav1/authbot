@@ -4,7 +4,7 @@ import time
 import random
 from contextlib import contextmanager
 from pathlib import Path
-from .domain import MAX_ACTIVE_PVP_GAMES, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
+from .domain import MAX_ACTIVE_PVP_GAMES, MAX_PVP_WAGER, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
 
 
 class Store:
@@ -408,8 +408,8 @@ class Store:
     def create_pvp(self, game_id, group_id, requester_id, requester_name,
                    target_id, target_name, amount, now=None):
         now = int(time.time()) if now is None else int(now)
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if requester_id == target_id:
             raise RuleError("ကိုယ့်ကိုယ်ကို PvP request လုပ်လို့မရပါ။")
         with self.transaction():
@@ -435,8 +435,8 @@ class Store:
 
     def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
         now = int(time.time()) if now is None else int(now)
-        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
-            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= MAX_PVP_WAGER:
+            raise RuleError("PvP လောင်းကြေးကို 250 မှ 30000 coin အတွင်းထားပါ။")
         if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
             raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         with self.transaction():
