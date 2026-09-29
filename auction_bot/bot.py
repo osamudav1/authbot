@@ -360,12 +360,16 @@ class AuctionBot:
         group = await bot.get_chat(int(group_id))
         if channel.type != "channel" or group.type != "supergroup" or channel.linked_chat_id != group.id or group.linked_chat_id != channel.id:
             raise RuleError("Telegram Channel Settings > Discussion မှာ ဒီ group ကို ချိတ်ထားရပါမယ်။")
-        member = await bot.get_chat_member(channel.id, bot.id)
+        # Resolve the bot identity from Telegram before checking membership.  The
+        # Bot.id property can be unset/stale before the application has completed
+        # initialization, which made an already-promoted bot look like a member.
+        bot_user = await bot.get_me()
+        member = await bot.get_chat_member(channel.id, bot_user.id)
         if member.status not in ("administrator", "creator") or (member.status == "administrator" and not member.can_post_messages):
             raise RuleError("Bot ကို channel admin + Post Messages permission ပေးပါ။")
-        member = await bot.get_chat_member(group.id, bot.id)
+        member = await bot.get_chat_member(group.id, bot_user.id)
         if member.status not in ("administrator", "creator"):
-            raise RuleError("Bot ကို discussion group admin ပေးပါ။")
+            raise RuleError(f"Bot ကို discussion group admin ပေးပါ။ (Telegram status: {member.status})")
 
     async def remember(self, message):
         """Trust only Telegram automatic forwards from the configured channel."""
