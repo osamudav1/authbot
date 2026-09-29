@@ -59,6 +59,24 @@ class MongoStore:
     def _clean(row):
         return {k:v for k,v in row.items() if k!="_id"} if row else None
 
+    def _record_streak(self, session, category, group_id, user_id, won, now):
+        key=f"{category}:{group_id}:{user_id}"
+        row=self.db.streaks.find_one({"_id":key},session=session)
+        streak=(row.get("streak",0) if row else 0) + 1 if won else 0
+        reward=50000 if streak == 3 else 150000 if streak == 6 else 0
+        self.db.streaks.update_one({"_id":key},{"$set":{"category":category,"group_id":group_id,
+            "user_id":user_id,"streak":streak,"updated":now}},upsert=True,session=session)
+        if reward:
+            balance=self.wallet_balance(user_id,session)
+            if balance["total"] + reward > 99999999999:
+                raise RuleError("Streak reward ထည့်လျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            self.db.wallets.update_one({"_id":user_id},{"$inc":{"balance":reward}},session=session)
+            eid=self._next("wallet_events",session)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=user_id,delta=reward,
+                kind="streak_reward",note=f"{category} {streak}-win streak reward",
+                actor_id=None,auction_id=None,event_key=f"streak:{category}:{group_id}:{user_id}:{streak}",created=now),session=session)
+        return {"streak":streak,"reward":reward}
+
     def get(self, key, default="", session=None):
         row=self.db.settings.find_one({"_id":key},session=session)
         return row["value"] if row else default
@@ -591,16 +609,22 @@ class MongoStore:
             at=time.time() if now is None else now
             if number in row["boom_positions"]:
                 if solo:
+                    streak=self._record_streak(s,"boom",row["group_id"],row["requester_id"],False,at)
                     self.db.boom_games.update_one({"_id":game_id,"status":"running"},
-                        {"$set":{"status":"finished","winner_id":0,"last_click":number},"$addToSet":{"revealed":number}},session=s)
+                        {"$set":{"status":"finished","winner_id":0,"last_click":number,
+                                  "streak":streak["streak"],"streak_reward":streak["reward"]},"$addToSet":{"revealed":number}},session=s)
                     return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
                 owner=row.get("boom_owners",{}).get(str(number))
                 winner=actor_id if owner == actor_id else (row["target_id"] if actor_id==row["requester_id"] else row["requester_id"])
                 pot=row["amount"]*2
                 self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":pot}},session=s)
+                winner_streak=self._record_streak(s,"boom",row["group_id"],winner,True,at)
+                loser=row["target_id"] if winner==row["requester_id"] else row["requester_id"]
+                self._record_streak(s,"boom",row["group_id"],loser,False,at)
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom prize · {game_id}",actor_id=None,auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
-                self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"last_click":number},"$addToSet":{"revealed":number}},session=s)
+                self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"last_click":number,
+                    "streak":winner_streak["streak"],"streak_reward":winner_streak["reward"]},"$addToSet":{"revealed":number}},session=s)
             else:
                 update={"$addToSet":{"revealed":number},"$set":{"last_click":number,"turn_at":at}}
                 if not solo:
@@ -625,12 +649,14 @@ class MongoStore:
             safe_count=len(row.get("revealed",[]))
             prize=self.solo_boom_prize(row["amount"], safe_count)
             self.db.wallets.update_one({"_id":actor_id},{"$inc":{"balance":prize}},session=s)
+            streak=self._record_streak(s,"boom",row["group_id"],actor_id,safe_count >= 4,at)
             eid=self._next("wallet_events",s)
             self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=actor_id,delta=prize,
                 kind="boom_win",note=f"Solo Boom cash prize · {game_id}",actor_id=None,
                 auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
             self.db.boom_games.update_one({"_id":game_id,"status":"running"},
-                {"$set":{"status":"finished","winner_id":actor_id,"cash_prize":prize,"cashed":1}},session=s)
+                {"$set":{"status":"finished","winner_id":actor_id,"cash_prize":prize,"cashed":1,
+                          "streak":streak["streak"],"streak_reward":streak["reward"]}},session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(cash)
 
@@ -648,6 +674,7 @@ class MongoStore:
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom timeout prize · {row['_id']}",actor_id=None,auction_id=None,event_key=f"boom:{row['_id']}:prize",created=at),session=s)
                 row["status"]="finished"; row["winner_id"]=winner; row["timeout"]=1
+                row["streak"]=winner_streak["streak"]; row["streak_reward"]=winner_streak["reward"]
                 finished.append(self._clean(row))
             return finished
         return self._tx(settle)
@@ -737,8 +764,12 @@ class MongoStore:
                     self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=prize,kind="pvp_win",
                         note=f"Solo PvP prize · {game_id}",actor_id=None,auction_id=None,
                         event_key=f"pvp:{game_id}:prize",created=at),session=s)
+                    streak=self._record_streak(s,"pvp",row["group_id"],winner,True,at)
+                else:
+                    streak=self._record_streak(s,"pvp",row["group_id"],row["requester_id"],False,at)
                 self.db.pvp_games.update_one({"_id":game_id,"status":"running"},
-                    {"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None}},session=s)
+                    {"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None,
+                              "streak":streak["streak"],"streak_reward":streak["reward"]}},session=s)
                 return self._pvp_game(game_id,s)
             winner = row["requester_id"] if requester_percent > 50 else row["target_id"]
             loser = row["target_id"] if winner == row["requester_id"] else row["requester_id"]
@@ -758,7 +789,10 @@ class MongoStore:
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=loser,delta=loser_payout,kind="pvp_refund",
                     note=f"PvP refund · {game_id}",actor_id=None,auction_id=None,event_key=f"pvp:{game_id}:refund",created=at),session=s)
-            self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None}},session=s)
+            winner_streak=self._record_streak(s,"pvp",row["group_id"],winner,True,at)
+            self._record_streak(s,"pvp",row["group_id"],loser,False,at)
+            self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None,
+                "streak":winner_streak["streak"],"streak_reward":winner_streak["reward"]}},session=s)
             return self._pvp_game(game_id,s)
         return self._tx(advance)
 
