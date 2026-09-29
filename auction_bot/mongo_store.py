@@ -453,7 +453,7 @@ class MongoStore:
             self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,
                 requester_id=user_id,requester_name=user_name[:64],target_id=0,target_name="House",
                 amount=amount,status="running",message_id=0,created=at,next_at=at+1,step=0,
-                final_percent=100 if result == "higher" else 0,winner_id=None,
+                final_percent=random.randint(1,99),winner_id=None,
                 slot_notified=0 if active == 4 else 1,
                 mode="solo",choice=choice,result=result),session=s)
             return self._pvp_game(game_id,s)
