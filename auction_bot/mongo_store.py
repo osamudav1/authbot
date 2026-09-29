@@ -662,15 +662,61 @@ class MongoStore:
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(cash)
 
+    def replay_user(self, group_id, user_id, now=None):
+        """Release only this user's stale solo rounds; never touch a duel."""
+        def replay(s):
+            at = time.time() if now is None else now
+            query = {"group_id": group_id, "requester_id": user_id,
+                     "status": {"$in": ["pending", "running"]}, "mode": "solo"}
+            games = [(self.db.pvp_games, row) for row in self.db.pvp_games.find(query, session=s)]
+            games += [(self.db.boom_games, row) for row in self.db.boom_games.find(query, session=s)]
+            cleared = []
+            for collection, row in games:
+                game_id = row["_id"]
+                refund_key = f"replay:{row.get('mode', 'game')}:{game_id}:refund"
+                if not self.db.wallet_events.find_one({"event_key": refund_key}, session=s):
+                    wallet = self.wallet_balance(user_id, s)
+                    if wallet["total"] + row["amount"] > 99999999999:
+                        raise RuleError("Replay refund ထည့်လျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+                    self.db.wallets.update_one({"_id": user_id}, {"$inc": {"balance": row["amount"]}}, session=s)
+                    eid = self._next("wallet_events", s)
+                    self.db.wallet_events.insert_one(dict(
+                        _id=eid, id=eid, user_id=user_id, delta=row["amount"],
+                        kind="game_refund", note=f"Replay stale game · {game_id}",
+                        actor_id=user_id, auction_id=None, event_key=refund_key, created=at), session=s)
+                result = collection.update_one(
+                    {"_id": game_id, "status": {"$in": ["pending", "running"]}},
+                    {"$set": {"status": "cancelled", "winner_id": 0, "replay": 1,
+                              "next_at": None, "turn_at": None}}, session=s)
+                if result.modified_count:
+                    row["status"] = "cancelled"; row["winner_id"] = 0; row["replay"] = 1
+                    cleared.append(self._clean(row))
+            return cleared
+        return self._tx(replay)
+
     def timeout_boom(self, now=None):
         at=time.time() if now is None else now
         def settle(s):
-            rows=list(self.db.boom_games.find({"status":"running","mode":{"$ne":"solo"},"turn_at":{"$lte":at-BOOM_TURN_TIMEOUT_SECONDS}},session=s))
+            rows=list(self.db.boom_games.find({"status":"running","turn_at":{"$lte":at-BOOM_TURN_TIMEOUT_SECONDS}},session=s))
             finished=[]
             for row in rows:
+                if row.get("mode") == "solo":
+                    streak=self._record_streak(s,"boom",row["group_id"],row["requester_id"],False,at)
+                    result=self.db.boom_games.update_one(
+                        {"_id":row["_id"],"status":"running"},
+                        {"$set":{"status":"finished","winner_id":0,"timeout":1,
+                                  "streak":streak["streak"],"streak_reward":streak["reward"]}}, session=s)
+                    if result.modified_count:
+                        row["status"]="finished"; row["winner_id"]=0; row["timeout"]=1
+                        row["streak"]=streak["streak"]; row["streak_reward"]=streak["reward"]
+                        finished.append(self._clean(row))
+                    continue
                 winner=row["target_id"] if row["turn_id"]==row["requester_id"] else row["requester_id"]
                 pot=row["amount"]*2
-                result=self.db.boom_games.update_one({"_id":row["_id"],"status":"running"},{"$set":{"status":"finished","winner_id":winner,"timeout":1}},session=s)
+                winner_streak=self._record_streak(s,"boom",row["group_id"],winner,True,at)
+                loser=row["target_id"] if winner==row["requester_id"] else row["requester_id"]
+                self._record_streak(s,"boom",row["group_id"],loser,False,at)
+                result=self.db.boom_games.update_one({"_id":row["_id"],"status":"running"},{"$set":{"status":"finished","winner_id":winner,"timeout":1,"streak":winner_streak["streak"],"streak_reward":winner_streak["reward"]}},session=s)
                 if not result.modified_count: continue
                 self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":pot}},session=s)
                 eid=self._next("wallet_events",s)

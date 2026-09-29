@@ -79,6 +79,7 @@ PVP_GROUP_COMMANDS = [
     BotCommand("bid", "Auction ID နဲ့ bid ဆွဲရန်: /bid AUCTION_ID 10.50"),
     BotCommand("pvp", "Reply duel သို့ solo higher/lower: /pvp 250 h"),
     BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
+    BotCommand("replay", "Stuck ဖြစ်နေသော ကိုယ့် Solo game ကို refund/ရှင်းရန်"),
     BotCommand("btop", "Coin အများဆုံး Top 10"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
@@ -280,6 +281,9 @@ def boom_text(game):
                 return text + (f'🏆 Winner: {pvp_name(game["requester_id"],game["requester_name"])}\n'
                                f'🪙 Win Prize: {money(prize)}\n'
                                f'🫆 Last Click - {(game.get("last_click") or "-")}\n❄️ Safe - {safe_count}')
+            if game.get("timeout"):
+                return text + (f'⏱️ 1min အတွင်း button မနှိပ်သဖြင့် အလိုအလျောက် ရှုံးပါပြီ။\n'
+                               f'🪙 Win Prize: 0coin\n❄️ Safe - {safe_count}')
             return text + (f'💥 Boom!\n🪙 Win Prize: 0coin\n'
                            f'🫆 Last Click - {(game.get("last_click") or "-")}\n❄️ Safe - {safe_count}')
         return text + (f'🪙 Now Win Prize: {money(prize)}\n'
@@ -357,6 +361,8 @@ class AuctionBot:
         self.pvp_slot_retry_after = {}
         self.button_cooldown_until = {}
         self.global_edit_after = 0
+        self.pvp_edit_after = 0
+        self.pvp_render_retry = {}
         self.tick_lock = asyncio.Lock()
 
     async def store_call(self, operation, *args, **kwargs):
@@ -572,13 +578,15 @@ class AuctionBot:
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
-            if self.pvp_group(update) and command in {"dailycoin", "pvp", "boom", "btop", "bal", "bcoin"}:
+            if self.pvp_group(update) and command in {"dailycoin", "pvp", "boom", "replay", "btop", "bal", "bcoin"}:
                 if command == "dailycoin":
                     await self.user_command(command, args, message, update.effective_user)
                 elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
                 elif command == "boom":
                     await self.boom_request(args, message, update.effective_user)
+                elif command == "replay":
+                    await self.replay_command(args, message, update.effective_user)
                 elif command == "btop":
                     await self.btop_command(args, message, context)
                 elif command == "bal":
@@ -784,6 +792,20 @@ class AuctionBot:
             try: await self.store_call(self.store.cancel_boom,game_id,user.id)
             except Exception: pass
             raise
+
+    async def replay_command(self, args, message, user):
+        if not user or user.is_bot:
+            raise RuleError("Telegram user account နဲ့ပဲ /replay သုံးနိုင်ပါတယ်။")
+        if args:
+            raise RuleError("/replay ကို argument မပါဘဲ သုံးပါ။")
+        games = await self.store_call(self.store.replay_user, message.chat_id, user.id)
+        if not games:
+            await message.reply_text("ရှင်းရန် stuck ဖြစ်နေတဲ့ ကိုယ့် Solo PvP/Boom ပွဲ မတွေ့ပါ။")
+            return
+        refunded = sum(game.get("amount", 0) for game in games)
+        await message.reply_text(
+            f"✅ Stuck Solo game {len(games)} ပွဲကို ရှင်းပြီး {money(refunded)} refund ပြန်ထည့်ပေးပါပြီ။\n"
+            "အခု /boom သို့ /pvp နဲ့ ပြန်ကစားနိုင်ပါပြီ။")
 
     async def btop_command(self, args, message, context):
         if args: raise RuleError("/btop ကို argument မပါဘဲ သုံးပါ။")
@@ -1412,24 +1434,56 @@ class AuctionBot:
                 log.warning("Expired Boom request message update failed for round %s", game["id"])
         timed_out_boom = await self.store_call(self.store.timeout_boom)
         for game in timed_out_boom:
+            if not game.get("message_id"):
+                continue
             try:
                 await context.bot.edit_message_text(
                     chat_id=game["group_id"], message_id=game["message_id"],
                     text=boom_text(game), parse_mode="HTML", reply_markup=boom_markup(game))
             except TelegramError:
                 log.warning("Boom turn timeout message update failed for round %s", game["id"])
+        now = time.monotonic()
+        for game_id, retry in list(self.pvp_render_retry.items()):
+            if now < retry["after"]:
+                continue
+            game = retry["game"]
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=game["group_id"], message_id=game["message_id"],
+                    text=pvp_animation_text(game), parse_mode="HTML")
+            except RetryAfter as exc:
+                delay = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else exc.retry_after
+                retry["after"] = time.monotonic() + delay + 1
+                self.pvp_edit_after = retry["after"]
+            except TelegramError:
+                retry["after"] = time.monotonic() + 10
+            else:
+                self.pvp_edit_after = time.monotonic() + 1.5
+                self.pvp_render_retry.pop(game_id, None)
+
         due_rounds = await self.store_call(self.store.due_pvp)
         for due in due_rounds:
+            if due["id"] in self.pvp_render_retry or time.monotonic() < self.pvp_edit_after:
+                continue
+            game = None
             try:
                 game = await self.store_call(self.store.advance_pvp, due["id"])
                 await context.bot.edit_message_text(
                     chat_id=game["group_id"], message_id=game["message_id"],
                     text=pvp_animation_text(game), parse_mode="HTML")
+                self.pvp_edit_after = time.monotonic() + 1.5
+            except RetryAfter as exc:
+                delay = exc.retry_after.total_seconds() if hasattr(exc.retry_after, "total_seconds") else exc.retry_after
+                self.pvp_render_retry[due["id"]] = {"game": game, "after": time.monotonic() + delay + 1}
+                self.pvp_edit_after = self.pvp_render_retry[due["id"]]["after"]
             except BadRequest as exc:
                 if "message is not modified" not in str(exc).lower():
                     log.warning("PvP message edit rejected for round %s", due["id"])
+                    self.pvp_render_retry[due["id"]] = {"game": game, "after": time.monotonic() + 10}
             except (RuleError, PyMongoError, TelegramError):
                 log.warning("PvP animation/settlement update failed for round %s", due["id"])
+                if game is not None:
+                    self.pvp_render_retry[due["id"]] = {"game": game, "after": time.monotonic() + 10}
         now = time.monotonic()
         notifications = await self.store_call(self.store.pending_pvp_slot_notifications)
         for game in notifications:
