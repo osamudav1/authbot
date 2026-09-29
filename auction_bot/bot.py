@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 POLLING_UPDATES = ["message", "callback_query", "inline_query"]
 UPDATE_CONCURRENCY = 16
 WORKER_TICK_INTERVAL_SECONDS = 0.5
+GAME_COOLDOWN_SECONDS = 6.0
 OWNER_ACTIONS = {
     "zip": "Bot code ZIP ယူရန်: /zip (Owner DM only)",
     "payout": "Bot ကပေးချေထားသော game payout စုစုပေါင်း: /payout (Owner only)",
@@ -352,6 +353,7 @@ class AuctionBot:
         self.winner_retry_after = {}
         self.pvp_slot_retry_after = {}
         self.button_cooldown_until = {}
+        self.game_cooldown_until = {}
         self.global_edit_after = 0
         self.pvp_edit_after = 0
         self.pvp_render_retry = {}
@@ -364,20 +366,32 @@ class AuctionBot:
         return operation(*args, **kwargs)
 
     def button_cooldown(self, user):
-        """Return remaining seconds for callback clicks, then arm a two-second cooldown."""
+        """Return remaining seconds for callback clicks, then arm a six-second cooldown."""
         if not user or user.is_bot:
             return 0.0
         now = time.monotonic()
         until = self.button_cooldown_until.get(user.id, 0.0)
         if until > now:
             return until - now
-        self.button_cooldown_until[user.id] = now + 2.0
+        self.button_cooldown_until[user.id] = now + GAME_COOLDOWN_SECONDS
         if len(self.button_cooldown_until) > 2048:
             self.button_cooldown_until = {
                 uid: expiry for uid, expiry in self.button_cooldown_until.items()
                 if expiry > now
             }
         return 0.0
+    def game_cooldown(self, user):
+        """Return remaining game-start cooldown without consuming it."""
+        if not user or user.is_bot:
+            return 0.0
+        now = time.monotonic()
+        until = self.game_cooldown_until.get(user.id, 0.0)
+        if until > now:
+            return until - now
+        return 0.0
+    def arm_game_cooldown(self, user):
+        if user and not user.is_bot:
+            self.game_cooldown_until[user.id] = time.monotonic() + GAME_COOLDOWN_SECONDS
 
     def owner(self, update):
         return bool(update.effective_user and update.effective_user.id in self.config.owners
@@ -704,6 +718,9 @@ class AuctionBot:
     async def pvp_request(self, args, message, user):
         if not user or user.is_bot:
             raise RuleError("Telegram user account နဲ့ပဲ PvP ကစားနိုင်ပါတယ်။")
+        remaining = self.game_cooldown(user)
+        if remaining:
+            raise RuleError(f"တစ်ပွဲပြီးပါပြီ။ {remaining:.1f} sec စောင့်ပြီးမှ ထပ်ကစားပါ။")
         reply = message.reply_to_message
         target = reply.from_user if reply and not reply.sender_chat else None
         if not target and len(args) == 2:
@@ -719,6 +736,7 @@ class AuctionBot:
                                          user.id, user.full_name, amount, choice, result)
             coin_message = await message.reply_text("🪙")
             await coin_message.reply_text(pvp_animation_text(game), parse_mode="HTML")
+            self.arm_game_cooldown(user)
             return
         if len(args) != 1:
             raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")
@@ -744,6 +762,7 @@ class AuctionBot:
         try:
             posted = await message.reply_text(text, parse_mode="HTML", reply_markup=markup)
             await self.store_call(self.store.set_pvp_message, game["id"], posted.message_id)
+            self.arm_game_cooldown(user)
         except Exception:
             try:
                 await self.store_call(self.store.cancel_pvp, game["id"], user.id)
@@ -754,6 +773,9 @@ class AuctionBot:
     async def boom_request(self, args, message, user):
         if not user or user.is_bot:
             raise RuleError("Telegram user account နဲ့ပဲ Boom ကစားနိုင်ပါတယ်။")
+        remaining = self.game_cooldown(user)
+        if remaining:
+            raise RuleError(f"တစ်ပွဲပြီးပါပြီ။ {remaining:.1f} sec စောင့်ပြီးမှ ထပ်ကစားပါ။")
         if len(args) != 1:
             raise RuleError("Solo အတွက် /boom 250၊ 2-player အတွက် ပြိုင်ဘက် message ကို reply လုပ်ပြီး /boom 250 ပုံစံရေးပါ။")
         reply=message.reply_to_message
@@ -764,6 +786,7 @@ class AuctionBot:
             game=await self.store_call(self.store.create_solo_boom,game_id,message.chat_id,
                                        user.id,user.full_name,amount)
             await message.reply_text(boom_text(game),parse_mode="HTML",reply_markup=boom_markup(game))
+            self.arm_game_cooldown(user)
             return
         if target.is_bot:
             raise RuleError("Bot message ကို reply လုပ်ပြီး Boom မကစားနိုင်ပါ။")
@@ -780,6 +803,7 @@ class AuctionBot:
         try:
             posted=await message.reply_text(text,parse_mode="HTML",reply_markup=markup)
             await self.store_call(self.store.set_boom_message,game_id,posted.message_id)
+            self.arm_game_cooldown(user)
         except Exception:
             try: await self.store_call(self.store.cancel_boom,game_id,user.id)
             except Exception: pass

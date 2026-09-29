@@ -316,18 +316,18 @@ class PvPStoreTests(unittest.TestCase):
         self.assertIn("100coin", message.sent[0])
         self.assertIn("Receiver", message.sent[0])
 
-    def test_button_cooldown_is_two_seconds(self):
+    def test_button_cooldown_is_six_seconds(self):
         owner_bot = object.__new__(AuctionBot)
         owner_bot.config = SimpleNamespace(owners=set())
         owner_bot.button_cooldown_until = {}
         user = SimpleNamespace(id=77, is_bot=False)
         self.assertEqual(owner_bot.button_cooldown(user), 0.0)
-        self.assertAlmostEqual(owner_bot.button_cooldown(user), 2.0, delta=0.01)
+        self.assertAlmostEqual(owner_bot.button_cooldown(user), 6.0, delta=0.01)
         owner_bot.button_cooldown_until = {}
         owner_bot.config.owners = {99}
         owner = SimpleNamespace(id=99, is_bot=False)
         self.assertEqual(owner_bot.button_cooldown(owner), 0.0)
-        self.assertAlmostEqual(owner_bot.button_cooldown(owner), 2.0, delta=0.01)
+        self.assertAlmostEqual(owner_bot.button_cooldown(owner), 6.0, delta=0.01)
 
     def test_credit_notification_is_sent_to_users_bot_dm(self):
         class FakeBot:
