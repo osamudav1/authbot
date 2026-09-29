@@ -437,7 +437,7 @@ class MongoStore:
                 raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
             active = self.db.pvp_games.count_documents({"group_id":group_id,"status":"running"}, session=s)
             if active >= 5:
-                raise RuleError("လက်ရှိ PvP round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
+                raise RuleError("လက်ရှိ PvP round ၃ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             if self._player_locked(group_id, user_id, s):
                 raise RuleError("ဒီ user က PvP/Boom game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
             balance = self.wallet_balance(user_id, s)
@@ -454,7 +454,7 @@ class MongoStore:
                 requester_id=user_id,requester_name=user_name[:64],target_id=0,target_name="House",
                 amount=amount,status="running",message_id=0,created=at,next_at=at+1,step=0,
                 final_percent=random.randint(1,99),winner_id=None,
-                slot_notified=0 if active == 4 else 1,
+                slot_notified=0 if active == 2 else 1,
                 mode="solo",choice=choice,result=result),session=s)
             return self._pvp_game(game_id,s)
         return self._tx(start)
@@ -498,8 +498,8 @@ class MongoStore:
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
                 raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
-            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 5:
-                raise RuleError("လက်ရှိ Boom round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 3:
+                raise RuleError("လက်ရှိ Boom round ၃ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             if self._player_locked(group_id, requester_id, s):
                 raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
             balance = self.wallet_balance(requester_id, s)
@@ -528,8 +528,8 @@ class MongoStore:
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
                 raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
-            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 5:
-                raise RuleError("လက်ရှိ Boom round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 3:
+                raise RuleError("လက်ရှိ Boom round ၃ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             for uid in (requester_id,target_id):
                 if self._player_locked(group_id,uid,s):
                     raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီး သို့မဟုတ် cancel ဖြစ်မှ ထပ်ခေါ်နိုင်ပါတယ်။")
@@ -718,8 +718,8 @@ class MongoStore:
             if row["status"]!="pending":raise RuleError("ဒီ PvP request ကို အရင်ဖြေပြီးပါပြီ။")
             if str(row["group_id"])!=str(self.get("pvp_group_id",session=s)):raise RuleError("ဒီ group မှာ PvP မကစားနိုင်တော့ပါ။")
             active_rounds = self.db.pvp_games.count_documents({"group_id":row["group_id"],"status":"running"},session=s)
-            if active_rounds>=5:
-                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
+            if active_rounds>=3:
+                raise RuleError("လက်ရှိ PvP round ၃ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             for uid in (row["requester_id"],row["target_id"]):
                 active_query={"group_id":row["group_id"],"status":"running","$or":[{"requester_id":uid},{"target_id":uid}]}
                 if (self.db.pvp_games.find_one(active_query,session=s)
@@ -734,8 +734,8 @@ class MongoStore:
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="pvp_stake",
                     note=f"PvP stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"pvp:{game_id}:stake:{uid}",created=at),session=s)
             self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+1,"step":0,"final_percent":final_percent,
-                # Only the fifth concurrent round can free a slot from a full set of five.
-                "slot_notified": 0 if active_rounds == 4 else 1}},session=s)
+                # Only the third concurrent round can free a slot from a full set of three.
+                "slot_notified": 0 if active_rounds == 2 else 1}},session=s)
             return self._pvp_game(game_id,s)
         return self._tx(accept)
 
