@@ -635,8 +635,8 @@ class MongoStore:
 
     @staticmethod
     def solo_boom_prize(amount, safe_count):
-        base = amount * 2
-        return (base * (10 + 2 * safe_count) + 5) // 10
+        # Solo Boom uses the wager as base: Safe 1 = 1.2x, Safe 2 = 1.4x.
+        return (amount * (10 + 2 * safe_count) + 5) // 10
 
     def cash_boom(self, game_id, actor_id, now=None):
         def cash(s):
