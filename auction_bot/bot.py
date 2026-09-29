@@ -290,9 +290,10 @@ class AuctionBot:
         if not config.mongodb_uri:
             raise ValueError("MONGODB_URI is required; SQLite is not supported by the bot runtime.")
         self.store = MongoStore(config.mongodb_uri, config.mongodb_database)
-        # Environment IDs bootstrap an empty DB; owner settings survive restarts.
+        # Environment IDs are authoritative.  This lets a deployment move to a
+        # new group/channel instead of silently reusing stale MongoDB settings.
         for key, value in [("channel_id", config.channel_id), ("group_id", config.group_id)]:
-            if value and not self.store.get(key):
+            if value and self.store.get(key) != value:
                 self.store.set(key, value)
         self.channel_id = str(self.store.get("channel_id") or "")
         self.group_id = str(self.store.get("group_id") or "")
