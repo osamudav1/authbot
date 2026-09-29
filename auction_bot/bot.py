@@ -200,7 +200,7 @@ def pvp_animation_text(game):
         digest = hashlib.sha256(f'{game["id"]}:{step}'.encode()).digest()
         shown = 10 + (digest[0] % 81)
     if game.get("mode") == "solo":
-        # Solo uses the same five-step suspense animation as a duel, with
+        # Solo uses the same three-step suspense animation as a duel, with
         # Higher/Lower as the two sides instead of two Telegram users.
         higher = shown if game.get("result") == "higher" else 100 - shown
         lower = 100 - higher
@@ -222,7 +222,7 @@ def pvp_animation_text(game):
                 if game.get("refund"):
                     text += f'\n↩️ Refund: {money(game["refund"])}'
         else:
-            text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး 5 round animation ပြီးချိန်မှာ result ထွက်ပါမယ်။"
+            text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး 3 round animation ပြီးချိန်မှာ redeem result ထွက်ပါမယ်။"
         return text
     second = 100 - shown
     filled = max(1, min(12, math.ceil(shown / 100 * 12)))

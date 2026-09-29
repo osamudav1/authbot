@@ -515,7 +515,7 @@ class Store:
             if row["status"] != "running" or row["next_at"] is None or row["next_at"] > now:
                 return row
             step = row["step"] + 1
-            if step < 5:
+            if step < 3:
                 self.db.execute("UPDATE pvp_games SET step=?,next_at=? WHERE id=? AND status='running'", (step,now+1,game_id))
                 return self._pvp_game(game_id)
             requester_percent = row["final_percent"]
@@ -536,7 +536,7 @@ class Store:
                 self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (loser_payout,loser_id))
                 self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,'pvp_refund',?,?,?,?)",
                                 (loser_id,loser_payout,f"PvP refund · {game_id}",None,f"pvp:{game_id}:refund",now))
-            self.db.execute("UPDATE pvp_games SET status='finished',winner_id=?,step=5,next_at=NULL WHERE id=?", (winner_id,game_id))
+            self.db.execute("UPDATE pvp_games SET status='finished',winner_id=?,step=3,next_at=NULL WHERE id=?", (winner_id,game_id))
             return self._pvp_game(game_id)
 
     def pending_pvp_slot_notifications(self):

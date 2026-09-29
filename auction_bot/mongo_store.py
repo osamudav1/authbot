@@ -797,7 +797,7 @@ class MongoStore:
             row=self._pvp_game(game_id,s)
             if row["status"]!="running" or row["next_at"] is None or row["next_at"]>at:return row
             step=row["step"]+1
-            if step<5:
+            if step<3:
                 self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"step":step,"next_at":at+PVP_ANIMATION_INTERVAL_SECONDS}},session=s)
                 return self._pvp_game(game_id,s)
             requester_percent = row["final_percent"]
@@ -829,7 +829,7 @@ class MongoStore:
                             event_key=f"pvp:{game_id}:refund",created=at),session=s)
                     streak=self._record_streak(s,"pvp",row["group_id"],row["requester_id"],False,at)
                 self.db.pvp_games.update_one({"_id":game_id,"status":"running"},
-                    {"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None,
+                    {"$set":{"status":"finished","winner_id":winner,"step":3,"next_at":None,
                               "prize":prize,"refund":refund,"streak":streak["streak"],"streak_reward":streak["reward"]}},session=s)
                 return self._pvp_game(game_id,s)
             winner = row["requester_id"] if requester_percent > 50 else row["target_id"]
@@ -852,7 +852,7 @@ class MongoStore:
                     note=f"PvP refund · {game_id}",actor_id=None,auction_id=None,event_key=f"pvp:{game_id}:refund",created=at),session=s)
             winner_streak=self._record_streak(s,"pvp",row["group_id"],winner,True,at)
             self._record_streak(s,"pvp",row["group_id"],loser,False,at)
-            self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None,
+            self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"step":3,"next_at":None,
                 "streak":winner_streak["streak"],"streak_reward":winner_streak["reward"]}},session=s)
             return self._pvp_game(game_id,s)
         return self._tx(advance)
