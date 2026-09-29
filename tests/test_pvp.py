@@ -66,7 +66,7 @@ class PvPStoreTests(unittest.TestCase):
         game = self.request("payout", 1, 2)
         self.store.accept_pvp(game["id"], 2, 60, now=100)
         self.assertEqual(self.store.due_pvp(now=100), [])
-        for tick in range(1, 4):
+        for tick in range(1, 3):
             game = self.store.advance_pvp(game["id"], now=100 + tick)
             self.assertEqual(game["step"], tick)
         self.assertEqual(game["status"], "finished")
@@ -83,14 +83,14 @@ class PvPStoreTests(unittest.TestCase):
         self.credit(2)
         game = self.request("split", 1, 2)
         self.store.accept_pvp(game["id"], 2, 80, now=100)
-        for tick in range(1, 4):
+        for tick in range(1, 3):
             game = self.store.advance_pvp(game["id"], now=100 + tick)
         self.assertEqual(self.store.wallet_balance(1)["total"], 130000)
         self.assertEqual(self.store.wallet_balance(2)["total"], 70000)
 
         game = self.request("full-pot", 1, 2)
         self.store.accept_pvp(game["id"], 2, 65, now=200)
-        for tick in range(1, 4):
+        for tick in range(1, 3):
             game = self.store.advance_pvp(game["id"], now=200 + tick)
         self.assertEqual(self.store.wallet_balance(1)["total"], 180000)
         self.assertEqual(self.store.wallet_balance(2)["total"], 20000)
