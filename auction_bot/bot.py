@@ -205,7 +205,7 @@ def pvp_animation_text(game):
         result = labels.get(game.get("result"), "Heads")
         won = game.get("winner_id") == game.get("requester_id")
         text = (f'⚔️ <b>PvP · {money(game["amount"])} each</b>\n\n'
-                f'🪙 <b>Coin Flip</b>\n\n'
+                f'😈 {pvp_name(game["requester_id"], game["requester_name"])}\n\n'
                 f'🎯 Your Choice — <b>{choice}</b>\n'
                 f'🪙 Result — <b>{result}</b>')
         if game["status"] == "finished":
@@ -717,7 +717,8 @@ class AuctionBot:
             game_id = secrets.token_hex(8)
             game = await self.store_call(self.store.play_solo_pvp, game_id, message.chat_id,
                                          user.id, user.full_name, amount, choice, result)
-            await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
+            coin_message = await message.reply_text("🪙")
+            await coin_message.reply_text(pvp_animation_text(game), parse_mode="HTML")
             return
         if len(args) != 1:
             raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")
