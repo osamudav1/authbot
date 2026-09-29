@@ -55,7 +55,6 @@ OWNER_ACTIONS = {
     "debit": "USD debit: /debit USER_ID $10 note သို့ reply /debit -$10 note",
     "wallet": "User coin wallet စစ်ရန်: /wallet USER_ID",
     "walletmode": "Bid ငွေကို ယာယီထိန်းထားရန်: /walletmode on",
-    "setpvpgp": "PvP ကစားမည့် group သတ်မှတ်ရန်: /setpvpgp -100…",
 }
 OWNER_ONLY_COMMANDS = (set(OWNER_ACTIONS) - {"auctions", "rules"}) | {
     "panel", "help", "draftcancel", "welcomehelp", "welcomecancel",
@@ -297,7 +296,9 @@ class AuctionBot:
                 self.store.set(key, value)
         self.channel_id = str(self.store.get("channel_id") or "")
         self.group_id = str(self.store.get("group_id") or "")
-        self.pvp_group_id = str(self.store.get("pvp_group_id") or "")
+        # GROUP_ID is the single discussion/game group.  Ignore any legacy
+        # pvp_group_id setting so old deployments cannot split the commands.
+        self.pvp_group_id = self.group_id
         self.edit_after = {}
         self.last_bid_at = {}
         self.last_caption_at = {}
@@ -799,7 +800,7 @@ class AuctionBot:
             await self.user_command(command, args, message, message.from_user)
             return
         no_args = {"zip", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
-        one_arg = {"view", "bids", "close", "cancelauction", "setchannel", "setgroup", "setpvpgp", "increment", "ban", "unban", "export", "wallet", "walletmode"}
+        one_arg = {"view", "bids", "close", "cancelauction", "setchannel", "setgroup", "increment", "ban", "unban", "export", "wallet", "walletmode"}
         if (command in no_args and args) or (command in one_arg and len(args) != 1) or (command == "extend" and len(args) != 2):
             raise RuleError(OWNER_ACTIONS.get(command, "Parameter မလိုပါ။"))
         if command in ("start", "help", "panel"):
@@ -874,17 +875,6 @@ class AuctionBot:
             else:
                 self.group_id = str(chat_id)
             result = "✅ သိမ်းပြီးပါပြီ။ /check နဲ့ ချိတ်ဆက်မှု စစ်ပါ။"
-        elif command == "setpvpgp":
-            chat_id = int(args[0])
-            if chat_id >= 0:
-                raise RuleError("Negative numeric supergroup ID ရေးပါ။ ဥပမာ -1001234567890")
-            chat = await context.bot.get_chat(chat_id)
-            if chat.type != "supergroup":
-                raise RuleError("PvP အတွက် supergroup ID ကို သုံးပါ။")
-            await self.store_call(self.store.set_pvp_group, chat_id)
-            self.pvp_group_id = str(chat_id)
-            await self.configure_menu(context.application)
-            result = f"✅ PvP group သတ်မှတ်ပြီးပါပြီ: {chat_id}\nဒီ group မှာ /pvp, /bal, /bcoin ပဲ သုံးနိုင်ပါမယ်။"
         elif command == "increment":
             await self.store_call(self.store.set, "increment", cents(args[0]))
             result = "✅ လေလံအသစ်တွေအတွက် increment သိမ်းပြီးပါပြီ။"
