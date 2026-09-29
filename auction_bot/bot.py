@@ -758,16 +758,16 @@ class AuctionBot:
             text = await self.store_call(account.balance, self.store, user.id)
         elif command == "dailycoin":
             result = await self.store_call(self.store.claim_dailycoin, user.id)
+            markup = None
             if result["claimed"]:
                 text = (f'🎁 Daily coin ရပါပြီ — <b>{money(result["reward"])}</b>\n\n'
-                        f'လက်ရှိသုံးနိုင် coin: <b>{money(result["available"])}</b>\n'
-                        'နောက်တစ်ကြိမ် 24 hours ပြည့်မှ ပြန်ယူနိုင်ပါမယ်။')
+                        f'Total coin: <b>{money(result["available"])}</b>\n\n'
+                        '24h , 0Min , 0Sec')
             else:
                 remaining = max(0, int(result["remaining"]))
                 hours, remainder = divmod(remaining, 3600)
                 minutes, seconds = divmod(remainder, 60)
-                text = (f'⏳ Daily coin ကို ထပ်ယူရန် <b>{hours} hours {minutes} minutes {seconds} sec</b> စောင့်ပါ။\n'
-                        '24 hours ပြည့်မှ တစ်ကြိမ် ထပ်ယူနိုင်ပါမယ်။')
+                text = f'⏳ Daily coin ကို ထပ်ယူရန် <b>{hours}h , {minutes}Min , {seconds}Sec</b> စောင့်ပါ။'
         elif command == "transactions":
             text = await self.store_call(account.transactions, self.store, user.id)
         elif command == "close":
