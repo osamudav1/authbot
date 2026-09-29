@@ -75,8 +75,6 @@ class MongoStore:
 
     def target(self, key, value):
         def change(s):
-            if key=="group_id" and str(value)==self.get("pvp_group_id",session=s):
-                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
             if self.get(key,session=s)==str(value): return
             if self.db.auctions.find_one({"status":{"$in":["active","publishing"]}},session=s):
                 raise RuleError("Channel/group ပြောင်းမယ်ဆို active/publishing လေလံတွေကို အရင်ပိတ်ပါ။")
@@ -85,8 +83,6 @@ class MongoStore:
 
     def set_pvp_group(self, group_id):
         def configure(s):
-            if str(group_id)==str(self.get("group_id",session=s)):
-                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
             if str(group_id) != str(self.get("pvp_group_id", session=s)) and self.db.pvp_games.find_one(
                     {"status":{"$in":["pending","running"]}}, session=s):
                 raise RuleError("PvP group ပြောင်းရန် pending/running ပွဲများကို အရင်ရှင်းပါ။")

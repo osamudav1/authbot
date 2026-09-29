@@ -100,8 +100,6 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, str(value)))
 
     def target(self, key, value):
-        if key == "group_id" and str(value) == self.get("pvp_group_id"):
-            raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
         if self.get(key) == str(value):
             return
         if self.db.execute("SELECT 1 FROM auctions WHERE status IN ('active','publishing') LIMIT 1").fetchone():
@@ -110,8 +108,6 @@ class Store:
 
     def set_pvp_group(self, group_id):
         with self.transaction():
-            if str(group_id) == self.get("group_id"):
-                raise RuleError("PvP group နဲ့ auction discussion group ကို သီးခြားထားပါ။")
             if str(group_id) != self.get("pvp_group_id") and self.db.execute(
                     "SELECT 1 FROM pvp_games WHERE status IN ('pending','running') LIMIT 1").fetchone():
                 raise RuleError("PvP group ပြောင်းရန် pending/running ပွဲများကို အရင်ရှင်းပါ။")

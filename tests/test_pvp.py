@@ -153,9 +153,10 @@ class PvPStoreTests(unittest.TestCase):
         )
         asyncio.run(bot.message(update, SimpleNamespace()))
 
-    def test_pvp_group_must_remain_separate_from_auction_group(self):
-        with self.assertRaisesRegex(RuleError, "သီးခြားထားပါ"):
-            self.store.target("group_id", -100123)
+    def test_pvp_group_can_be_the_auction_group(self):
+        self.store.target("group_id", -100123)
+        self.assertEqual(self.store.get("group_id"), "-100123")
+        self.assertEqual(self.store.get("pvp_group_id"), "-100123")
 
     def test_final_animation_shows_odds_and_winner(self):
         text = pvp_animation_text({

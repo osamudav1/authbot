@@ -516,7 +516,7 @@ class AuctionBot:
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
-            if self.pvp_group(update):
+            if self.pvp_group(update) and command in {"dailycoin", "author", "pvp", "boom", "btop", "bal", "bcoin"}:
                 if command == "dailycoin":
                     await self.user_command(command, args, message, update.effective_user)
                 elif command == "author":
@@ -1383,10 +1383,14 @@ class AuctionBot:
         ]
         auction_group = self.group_id
         pvp_group = self.pvp_group_id
-        if auction_group and auction_group != pvp_group:
-            scopes.append((BotCommandScopeChat(int(auction_group)), AUCTION_GROUP_COMMANDS))
-        if pvp_group:
-            scopes.append((BotCommandScopeChat(int(pvp_group)), PVP_GROUP_COMMANDS))
+        if auction_group and auction_group == pvp_group:
+            merged = {command.command: command for command in AUCTION_GROUP_COMMANDS + PVP_GROUP_COMMANDS}
+            scopes.append((BotCommandScopeChat(int(auction_group)), list(merged.values())))
+        else:
+            if auction_group:
+                scopes.append((BotCommandScopeChat(int(auction_group)), AUCTION_GROUP_COMMANDS))
+            if pvp_group:
+                scopes.append((BotCommandScopeChat(int(pvp_group)), PVP_GROUP_COMMANDS))
         # Replace owner chat overrides too; privileged commands stay in /panel only.
         scopes.extend((BotCommandScopeChat(owner_id), USER_COMMANDS) for owner_id in sorted(self.config.owners))
         try:
