@@ -213,9 +213,13 @@ def pvp_animation_text(game):
             text += f'\n\n🎯 Your Choice — <b>{html.escape(game.get("choice", "higher"))}</b>'
             text += f'\n🎲 Result — <b>{html.escape(game.get("result", "higher"))}</b>'
             if won:
-                text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game["amount"] * 2)}'
+                text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game.get("prize", game["amount"] * 2))}'
+                if game.get("refund"):
+                    text += f'\n↩️ Refund: {money(game["refund"])}'
             else:
                 text += '\n\n❌ You lose\n🪙 Prize: 0coin'
+                if game.get("refund"):
+                    text += f'\n↩️ Refund: {money(game["refund"])}'
         else:
             text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး 5 round animation ပြီးချိန်မှာ result ထွက်ပါမယ်။"
         return text

@@ -756,20 +756,39 @@ class MongoStore:
             target_percent = 100 - requester_percent
             if row.get("mode") == "solo":
                 won = row.get("choice") == row.get("result")
+                pot = row["amount"] * 2
+                winning_percent = requester_percent
+                losing_percent = 100 - winning_percent
+                share = pot * losing_percent // 100 if losing_percent <= 25 else 0
                 winner = row["requester_id"] if won else 0
+                prize = pot - share if won else 0
+                refund = share if won else (pot * (100 - winning_percent) // 100 if (100 - winning_percent) <= 25 else 0)
                 if won:
-                    prize = row["amount"] * 2
                     self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":prize}},session=s)
                     eid=self._next("wallet_events",s)
                     self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=prize,kind="pvp_win",
                         note=f"Solo PvP prize · {game_id}",actor_id=None,auction_id=None,
                         event_key=f"pvp:{game_id}:prize",created=at),session=s)
+                    if refund:
+                        self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":refund}},session=s)
+                        eid=self._next("wallet_events",s)
+                        self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=refund,kind="pvp_refund",
+                            note=f"Solo PvP share refund · {game_id}",actor_id=None,auction_id=None,
+                            event_key=f"pvp:{game_id}:refund",created=at),session=s)
                     streak=self._record_streak(s,"pvp",row["group_id"],winner,True,at)
                 else:
+                    player_percent = 100 - winning_percent
+                    refund = pot * player_percent // 100 if player_percent <= 25 else 0
+                    if refund:
+                        self.db.wallets.update_one({"_id":row["requester_id"]},{"$inc":{"balance":refund}},session=s)
+                        eid=self._next("wallet_events",s)
+                        self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=row["requester_id"],delta=refund,kind="pvp_refund",
+                            note=f"Solo PvP share refund · {game_id}",actor_id=None,auction_id=None,
+                            event_key=f"pvp:{game_id}:refund",created=at),session=s)
                     streak=self._record_streak(s,"pvp",row["group_id"],row["requester_id"],False,at)
                 self.db.pvp_games.update_one({"_id":game_id,"status":"running"},
                     {"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None,
-                              "streak":streak["streak"],"streak_reward":streak["reward"]}},session=s)
+                              "prize":prize,"refund":refund,"streak":streak["streak"],"streak_reward":streak["reward"]}},session=s)
                 return self._pvp_game(game_id,s)
             winner = row["requester_id"] if requester_percent > 50 else row["target_id"]
             loser = row["target_id"] if winner == row["requester_id"] else row["requester_id"]
