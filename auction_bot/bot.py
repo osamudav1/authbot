@@ -190,29 +190,36 @@ def pvp_payouts(game):
 
 
 def pvp_animation_text(game):
-    if game.get("mode") == "solo":
-        choice = game.get("choice", "higher")
-        result = game.get("result", "higher")
-        won = game.get("winner_id") == game.get("requester_id")
-        text = (f'⚔️ <b>Solo PvP · {money(game["amount"])}</b>\n\n'
-                f'🟦 Higher\n\n🟥 Lower\n\n'
-                f'🎯 Your Choice — <b>{html.escape(choice)}</b>\n'
-                f'🎲 Result — <b>{html.escape(result)}</b>\n\n'
-                f'You Last Click - {html.escape(choice)}')
-        if won:
-            text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game["amount"] * 2)}'
-        else:
-            text += '\n\n❌ You lose\n🪙 Prize: 0coin'
-        return text
-    first = game["final_percent"]
-    if game["status"] in {"pending", "finished"}:
-        shown = 50 if game["status"] == "pending" else first
+    first = game.get("final_percent") if game.get("final_percent") is not None else 50
+    if game["status"] == "pending":
+        shown = 50
+    elif game["status"] == "finished":
+        shown = first
     else:
         step = game["step"]
-        # Keep the suspense repeatable after restarts while allowing either side
-        # to jump from a slim chance to a dominant-looking lead between rounds.
         digest = hashlib.sha256(f'{game["id"]}:{step}'.encode()).digest()
         shown = 10 + (digest[0] % 81)
+    if game.get("mode") == "solo":
+        # Solo uses the same five-step suspense animation as a duel, with
+        # Higher/Lower as the two sides instead of two Telegram users.
+        higher = shown if game.get("result") == "higher" else 100 - shown
+        lower = 100 - higher
+        filled = max(1, min(12, math.ceil(higher / 100 * 12)))
+        bar = "🟦" * filled + "🟥" * (12 - filled)
+        text = (f'⚔️ <b>PvP · {money(game["amount"])} each</b>\n\n'
+                f'🟦 Higher— <b>{higher}%</b>\n\n{bar}\n\n'
+                f'🟥 Lower— <b>{lower}%</b>')
+        if game["status"] == "finished":
+            won = game.get("winner_id") == game.get("requester_id")
+            text += f'\n\n🎯 Your Choice — <b>{html.escape(game.get("choice", "higher"))}</b>'
+            text += f'\n🎲 Result — <b>{html.escape(game.get("result", "higher"))}</b>'
+            if won:
+                text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game["amount"] * 2)}'
+            else:
+                text += '\n\n❌ You lose\n🪙 Prize: 0coin'
+        else:
+            text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး 5 round animation ပြီးချိန်မှာ result ထွက်ပါမယ်။"
+        return text
     second = 100 - shown
     filled = max(1, min(12, math.ceil(shown / 100 * 12)))
     bar = "🟦" * filled + "🟥" * (12 - filled)
@@ -710,9 +717,11 @@ class AuctionBot:
             if amount < MIN_PVP_WAGER:
                 raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
             result = secrets.choice(("higher", "lower"))
-            game = await self.store_call(self.store.play_solo_pvp, secrets.token_hex(8), message.chat_id,
+            game_id = secrets.token_hex(8)
+            game = await self.store_call(self.store.start_solo_pvp, game_id, message.chat_id,
                                          user.id, user.full_name, amount, choice, result)
-            await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
+            posted = await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
+            await self.store_call(self.store.set_pvp_message, game_id, posted.message_id)
             return
         if len(args) != 1:
             raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")

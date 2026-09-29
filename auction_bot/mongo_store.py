@@ -393,7 +393,40 @@ class MongoStore:
         return self._tx(create)
 
     def set_pvp_message(self,game_id,message_id):
-        self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"message_id":message_id}})
+        self.db.pvp_games.update_one({"_id":game_id,"message_id":0,"status":{"$in":["pending","running"]}},
+                                     {"$set":{"message_id":message_id}})
+
+    def start_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။")
+        def start(s):
+            at = time.time() if now is None else now
+            if str(group_id) != str(self.get("pvp_group_id", session=s)):
+                raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            active = self.db.pvp_games.count_documents({"group_id":group_id,"status":"running"}, session=s)
+            if active >= 5:
+                raise RuleError("လက်ရှိ PvP round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
+            if self._player_locked(group_id, user_id, s):
+                raise RuleError("ဒီ user က PvP/Boom game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
+            balance = self.wallet_balance(user_id, s)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            if result == choice and balance["total"] - amount + amount * 2 > 99999999999:
+                raise RuleError("အနိုင်ရလျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            self.db.wallets.update_one({"_id":user_id,"balance":{"$gte":amount}}, {"$inc":{"balance":-amount}}, session=s)
+            eid=self._next("wallet_events",s)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=user_id,delta=-amount,kind="pvp_stake",
+                note=f"Solo PvP stake · {game_id}",actor_id=user_id,auction_id=None,
+                event_key=f"pvp:{game_id}:stake",created=at),session=s)
+            self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,
+                requester_id=user_id,requester_name=user_name[:64],target_id=0,target_name="House",
+                amount=amount,status="running",message_id=0,created=at,next_at=at+1,step=0,
+                final_percent=100 if result == "higher" else 0,winner_id=None,slot_notified=0,
+                mode="solo",choice=choice,result=result),session=s)
+            return self._pvp_game(game_id,s)
+        return self._tx(start)
 
     def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
@@ -434,8 +467,8 @@ class MongoStore:
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
                 raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
-            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 2:
-                raise RuleError("လက်ရှိ Boom ပွဲ ၂ ပွဲ ကစားနေပါတယ်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 5:
+                raise RuleError("လက်ရှိ Boom round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             if self._player_locked(group_id, requester_id, s):
                 raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
             balance = self.wallet_balance(requester_id, s)
@@ -464,8 +497,8 @@ class MongoStore:
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
                 raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
-            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 2:
-                raise RuleError("လက်ရှိ Boom ပွဲ ၂ ပွဲ ကစားနေပါတယ်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 5:
+                raise RuleError("လက်ရှိ Boom round ၅ ပွဲ ပြည့်နေပါပြီ။ 1 round လွတ်မှ ထပ်ကစားနိုင်ပါမည်။")
             for uid in (requester_id,target_id):
                 if self._player_locked(group_id,uid,s):
                     raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီး သို့မဟုတ် cancel ဖြစ်မှ ထပ်ခေါ်နိုင်ပါတယ်။")
@@ -675,6 +708,19 @@ class MongoStore:
                 return self._pvp_game(game_id,s)
             requester_percent = row["final_percent"]
             target_percent = 100 - requester_percent
+            if row.get("mode") == "solo":
+                won = row.get("choice") == row.get("result")
+                winner = row["requester_id"] if won else 0
+                if won:
+                    prize = row["amount"] * 2
+                    self.db.wallets.update_one({"_id":winner},{"$inc":{"balance":prize}},session=s)
+                    eid=self._next("wallet_events",s)
+                    self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=prize,kind="pvp_win",
+                        note=f"Solo PvP prize · {game_id}",actor_id=None,auction_id=None,
+                        event_key=f"pvp:{game_id}:prize",created=at),session=s)
+                self.db.pvp_games.update_one({"_id":game_id,"status":"running"},
+                    {"$set":{"status":"finished","winner_id":winner,"step":5,"next_at":None}},session=s)
+                return self._pvp_game(game_id,s)
             winner = row["requester_id"] if requester_percent > 50 else row["target_id"]
             loser = row["target_id"] if winner == row["requester_id"] else row["requester_id"]
             loser_percent = target_percent if winner == row["requester_id"] else requester_percent
