@@ -68,7 +68,6 @@ USER_COMMANDS = [
     BotCommand("auctions", "ဖွင့်ထားသော လေလံများ"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
-    BotCommand("dailycoin", "နေ့စဉ် coin reward ရယူရန်"),
     BotCommand("transactions", "Coin အဝင်အထွက်မှတ်တမ်း"),
 ]
 AUCTION_GROUP_COMMANDS = [
@@ -84,6 +83,7 @@ PVP_GROUP_COMMANDS = [
     BotCommand("author", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
+    BotCommand("dailycoin", "နေ့စဉ် coin reward ရယူရန်"),
 ]
 
 PROMPTS = {
@@ -513,11 +513,13 @@ class AuctionBot:
                             log.warning("New-user notification state unavailable for user %s", update.effective_user.id)
                     value = await self.store_call(welcome.load, self.store)
                     await welcome.send(message, value, update.effective_user, context.bot)
-                elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "dailycoin", "transactions"}:
+                elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
             if self.pvp_group(update):
-                if command == "author":
+                if command == "dailycoin":
+                    await self.user_command(command, args, message, update.effective_user)
+                elif command == "author":
                     await self.author_command(message)
                 elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
@@ -782,7 +784,7 @@ class AuctionBot:
             await message.reply_text(text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
 
     async def owner_command(self, command, args, message, context):
-        if command in {"menu", "history", "wins", "balance", "bal", "dailycoin", "transactions"}:
+        if command in {"menu", "history", "wins", "balance", "bal", "transactions"}:
             await self.user_command(command, args, message, message.from_user)
             return
         no_args = {"zip", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
