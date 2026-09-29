@@ -427,6 +427,34 @@ class MongoStore:
             return self._pvp_game(game_id, s)
         return self._tx(play)
 
+    def create_solo_boom(self, game_id, group_id, requester_id, requester_name, amount, now=None):
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        def create(s):
+            at = time.time() if now is None else now
+            if str(group_id) != str(self.get("pvp_group_id", session=s)):
+                raise RuleError("Boom ကို သတ်မှတ်ထားတဲ့ game group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self.db.boom_games.count_documents({"group_id":group_id,"status":"running"}, session=s) >= 2:
+                raise RuleError("လက်ရှိ Boom ပွဲ ၂ ပွဲ ကစားနေပါတယ်။")
+            if self._player_locked(group_id, requester_id, s):
+                raise RuleError("ဒီ user က PvP/Boom request သို့ game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
+            balance = self.wallet_balance(requester_id, s)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            self.db.wallets.update_one({"_id":requester_id,"balance":{"$gte":amount}}, {"$inc":{"balance":-amount}}, session=s)
+            eid=self._next("wallet_events",s)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=requester_id,delta=-amount,
+                kind="boom_stake",note=f"Solo Boom stake · {game_id}",actor_id=requester_id,
+                auction_id=None,event_key=f"boom:{game_id}:stake:{requester_id}",created=at),session=s)
+            positions=random.sample(range(1,13),4)
+            self.db.boom_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,
+                requester_id=requester_id,requester_name=requester_name[:64],target_id=0,target_name="BOOM",
+                amount=amount,status="running",message_id=0,created=at,board_size=12,
+                boom_positions=positions,boom_owners={},revealed=[],turn_id=requester_id,
+                turn_at=at,last_click=None,mode="solo",winner_id=None), session=s)
+            return self._clean(self.db.boom_games.find_one({"_id":game_id}, session=s))
+        return self._tx(create)
+
     def create_boom(self, game_id, group_id, requester_id, requester_name, target_id, target_name, amount, now=None):
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
             raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
@@ -503,12 +531,19 @@ class MongoStore:
         def pick(s):
             row=self.db.boom_games.find_one({"_id":game_id},session=s)
             if not row or row["status"] != "running": raise RuleError("ဒီ Boom game မကစားနိုင်တော့ပါ။")
-            if actor_id not in (row["requester_id"],row["target_id"]): raise RuleError("ဒီ game ထဲက player ၂ ယောက်ပဲ နှိပ်နိုင်ပါတယ်။")
-            if actor_id != row["turn_id"]: raise RuleError("အခု သင့်အလှည့်မဟုတ်ပါ။")
+            solo = row.get("mode") == "solo"
+            if solo and actor_id != row["requester_id"]:
+                raise RuleError("ဒီ Solo Boom ကို စတင်ကစားသူပဲ နှိပ်နိုင်ပါတယ်။")
+            if not solo and actor_id not in (row["requester_id"],row["target_id"]): raise RuleError("ဒီ game ထဲက player ၂ ယောက်ပဲ နှိပ်နိုင်ပါတယ်။")
+            if not solo and actor_id != row["turn_id"]: raise RuleError("အခု သင့်အလှည့်မဟုတ်ပါ။")
             if number in row["revealed"]: raise RuleError("ဒီ button ကို နှိပ်ပြီးသားပါ။")
             if number < 1 or number > row["board_size"]: raise RuleError("Button မမှန်ပါ။")
             at=time.time() if now is None else now
             if number in row["boom_positions"]:
+                if solo:
+                    self.db.boom_games.update_one({"_id":game_id,"status":"running"},
+                        {"$set":{"status":"finished","winner_id":0,"last_click":number},"$addToSet":{"revealed":number}},session=s)
+                    return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
                 owner=row.get("boom_owners",{}).get(str(number))
                 winner=actor_id if owner == actor_id else (row["target_id"] if actor_id==row["requester_id"] else row["requester_id"])
                 pot=row["amount"]*2
@@ -517,14 +552,42 @@ class MongoStore:
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=winner,delta=pot,kind="boom_win",note=f"Boom prize · {game_id}",actor_id=None,auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
                 self.db.boom_games.update_one({"_id":game_id,"status":"running"},{"$set":{"status":"finished","winner_id":winner,"last_click":number},"$addToSet":{"revealed":number}},session=s)
             else:
-                self.db.boom_games.update_one({"_id":game_id,"status":"running","turn_id":actor_id,"revealed":{"$ne":number}},{"$addToSet":{"revealed":number},"$set":{"turn_id":row["target_id"] if actor_id==row["requester_id"] else row["requester_id"],"turn_at":at,"last_click":number}},session=s)
+                update={"$addToSet":{"revealed":number},"$set":{"last_click":number,"turn_at":at}}
+                if not solo:
+                    update["$set"]["turn_id"] = row["target_id"] if actor_id==row["requester_id"] else row["requester_id"]
+                self.db.boom_games.update_one({"_id":game_id,"status":"running","revealed":{"$ne":number}},update,session=s)
             return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
         return self._tx(pick)
+
+    @staticmethod
+    def solo_boom_prize(amount, safe_count):
+        base = amount * 2
+        return (base * (10 + 2 * safe_count) + 5) // 10
+
+    def cash_boom(self, game_id, actor_id, now=None):
+        def cash(s):
+            at=time.time() if now is None else now
+            row=self.db.boom_games.find_one({"_id":game_id},session=s)
+            if not row or row.get("mode") != "solo" or row["status"] != "running":
+                raise RuleError("ဒီ Solo Boom မှာ Cash ထုတ်လို့မရတော့ပါ။")
+            if actor_id != row["requester_id"]:
+                raise RuleError("ဒီ Solo Boom ကို စတင်ကစားသူပဲ Cash ထုတ်နိုင်ပါတယ်။")
+            safe_count=len(row.get("revealed",[]))
+            prize=self.solo_boom_prize(row["amount"], safe_count)
+            self.db.wallets.update_one({"_id":actor_id},{"$inc":{"balance":prize}},session=s)
+            eid=self._next("wallet_events",s)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=actor_id,delta=prize,
+                kind="boom_win",note=f"Solo Boom cash prize · {game_id}",actor_id=None,
+                auction_id=None,event_key=f"boom:{game_id}:prize",created=at),session=s)
+            self.db.boom_games.update_one({"_id":game_id,"status":"running"},
+                {"$set":{"status":"finished","winner_id":actor_id,"cash_prize":prize,"cashed":1}},session=s)
+            return self._clean(self.db.boom_games.find_one({"_id":game_id},session=s))
+        return self._tx(cash)
 
     def timeout_boom(self, now=None):
         at=time.time() if now is None else now
         def settle(s):
-            rows=list(self.db.boom_games.find({"status":"running","turn_at":{"$lte":at-BOOM_TURN_TIMEOUT_SECONDS}},session=s))
+            rows=list(self.db.boom_games.find({"status":"running","mode":{"$ne":"solo"},"turn_at":{"$lte":at-BOOM_TURN_TIMEOUT_SECONDS}},session=s))
             finished=[]
             for row in rows:
                 winner=row["target_id"] if row["turn_id"]==row["requester_id"] else row["requester_id"]

@@ -241,14 +241,40 @@ def boom_markup(game):
         for number in range(start,min(start+3,size+1)):
             label="❄️" if number in revealed else str(number)
             if game.get("status") == "finished" and number in game.get("boom_positions", []):
-                owner=game.get("boom_owners",{}).get(str(number))
-                label="🟦" if owner == game["requester_id"] else "🟥"
+                if game.get("mode") == "solo":
+                    label="🟥"
+                else:
+                    owner=game.get("boom_owners",{}).get(str(number))
+                    label="🟦" if owner == game["requester_id"] else "🟥"
             row.append(InlineKeyboardButton(label, callback_data=f'boom:pick:{game["id"]}:{number}'))
         rows.append(row)
+    if game.get("mode") == "solo" and game.get("status") == "running":
+        rows.append([button("💵 Cash", f'boom:cash:{game["id"]}', "success")])
     return InlineKeyboardMarkup(rows)
 
 
+def solo_boom_prize(amount, safe_count):
+    # Safe 1 = 1.2x, Safe 2 = 1.4x, Safe 3 = 1.6x, etc.
+    base = amount * 2
+    return (base * (10 + 2 * safe_count) + 5) // 10
+
+
 def boom_text(game):
+    if game.get("mode") == "solo":
+        text=(f'💣 <b>Boom · {money(game["amount"])} each</b>\n\n'
+              f'🟦 {pvp_name(game["requester_id"],game["requester_name"])}\n'
+              f'🟥 BOOM\n\n')
+        safe_count=len(game.get("revealed", []))
+        prize=game.get("cash_prize", solo_boom_prize(game["amount"], safe_count))
+        if game.get("status") == "finished":
+            if game.get("winner_id") == game.get("requester_id"):
+                return text + (f'🏆 Winner: {pvp_name(game["requester_id"],game["requester_name"])}\n'
+                               f'🪙 Win Prize: {money(prize)}\n'
+                               f'🫆 Last Click - {(game.get("last_click") or "-")}\n❄️ Safe - {safe_count}')
+            return text + (f'💥 Boom!\n🪙 Win Prize: 0coin\n'
+                           f'🫆 Last Click - {(game.get("last_click") or "-")}\n❄️ Safe - {safe_count}')
+        return text + (f'🪙 Now Win Prize: {money(prize)}\n'
+                       f'🫆 Last Click - {(game.get("last_click") or "-")}\n❄️ Safe - {safe_count}')
     text=(f'💣 <b>Boom · {money(game["amount"])} each</b>\n\n'
           f'🟦 {pvp_name(game["requester_id"],game["requester_name"])}\n'
           f'🟥 {pvp_name(game["target_id"],game["target_name"])}\n\n')
@@ -723,13 +749,20 @@ class AuctionBot:
         if not user or user.is_bot:
             raise RuleError("Telegram user account နဲ့ပဲ Boom ကစားနိုင်ပါတယ်။")
         if len(args) != 1:
-            raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /boom 250 ပုံစံရေးပါ။")
+            raise RuleError("Solo အတွက် /boom 250၊ 2-player အတွက် ပြိုင်ဘက် message ကို reply လုပ်ပြီး /boom 250 ပုံစံရေးပါ။")
         reply=message.reply_to_message
         target=reply.from_user if reply and not reply.sender_chat else None
-        if not target or target.is_bot:
-            raise RuleError("Boom လုပ်မယ့် user ရဲ့ message ကို reply လုပ်ပါ။")
+        amount=cents(args[0])
+        if not target:
+            game_id=secrets.token_hex(8)
+            game=await self.store_call(self.store.create_solo_boom,game_id,message.chat_id,
+                                       user.id,user.full_name,amount)
+            await message.reply_text(boom_text(game),parse_mode="HTML",reply_markup=boom_markup(game))
+            return
+        if target.is_bot:
+            raise RuleError("Bot message ကို reply လုပ်ပြီး Boom မကစားနိုင်ပါ။")
         if target.id == user.id: raise RuleError("ကိုယ့်ကိုယ်ကို Boom request လုပ်လို့မရပါ။")
-        amount=cents(args[0]); game_id=secrets.token_hex(8)
+        game_id=secrets.token_hex(8)
         game=await self.store_call(self.store.create_boom,game_id,message.chat_id,user.id,user.full_name,target.id,target.full_name,amount)
         markup=InlineKeyboardMarkup([[
             button("✅ Confirm",f"boom:confirm:{game_id}","success"),
@@ -1104,6 +1137,10 @@ class AuctionBot:
                     game=await self.store_call(self.store.cancel_boom,game_id,update.effective_user.id)
                     await query.answer("Boom request ကို ဖျက်သိမ်းပြီးပါပြီ။")
                     await query.edit_message_text(f'❌ Boom request ပယ်ဖျက်ပြီးပါပြီ။\n{pvp_name(game["requester_id"],game["requester_name"])} · {pvp_name(game["target_id"],game["target_name"])}',parse_mode="HTML")
+                elif action == "cash":
+                    game=await self.store_call(self.store.cash_boom,game_id,update.effective_user.id)
+                    await query.answer("Cash ထုတ်ပြီးပါပြီ။")
+                    await query.edit_message_text(boom_text(game),parse_mode="HTML",reply_markup=boom_markup(game))
                 elif action == "pick" and len(parts)==4:
                     game=await self.store_call(self.store.pick_boom,game_id,update.effective_user.id,int(parts[3]))
                     await query.answer("Boom!" if game["status"]=="finished" else "Safe button ပါ။")
