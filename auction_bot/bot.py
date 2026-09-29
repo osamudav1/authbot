@@ -19,7 +19,7 @@ from telegram.ext import Application, CallbackQueryHandler, InlineQueryHandler, 
 from . import account, welcome
 from .config import Config
 from .source_export import source_zip
-from .domain import MAX_OWNER_ADJUSTMENT_USD_SUBUNITS, MAX_PVP_WAGER, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
+from .domain import MAX_PVP_WAGER, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
 from .mongo_store import MongoStore
 from pymongo.errors import PyMongoError
 
@@ -100,7 +100,7 @@ PROMPTS = {
 STEPS = list(PROMPTS)
 
 
-AUTH_USAGE = "USD ကို coin အဖြစ်ပြောင်းရန် user message ကို reply လုပ်ပြီး /auth +$100 သို့ /auth -$5 ရေးပါ။ ID ဖြင့် /auth USER_ID +$100 သို့ /auth USER_ID -$5 ရေးနိုင်ပါတယ်။ Rate: $100 = 500 coin."
+AUTH_USAGE = "USD ကို coin အဖြစ်ပြောင်းရန် user message ကို reply လုပ်ပြီး /auth +$100 သို့ /auth -$5 ရေးပါ။ ID ဖြင့် /auth USER_ID +$100 သို့ /auth USER_ID -$5 ရေးနိုင်ပါတယ်။ Rate: $100 = 2500 coin."
 
 
 def auth_adjustment(args, message):
@@ -129,8 +129,6 @@ def auth_adjustment(args, message):
     else:
         raise RuleError(AUTH_USAGE)
     amount = usd_to_coins(value)
-    if amount > MAX_OWNER_ADJUSTMENT_USD_SUBUNITS * USD_TO_COIN_RATE:
-        raise RuleError("Owner +/− ပမာဏကို $2500 ထက် မကျော်စေရပါ။")
     return user_id, amount if sign=="+" else -amount, note
 
 
@@ -1014,7 +1012,7 @@ class AuctionBot:
                       f'Auction group: {self.group_id or "မသတ်မှတ်ရသေး"}\n'
                       f'PvP group: {self.pvp_group_id or "မသတ်မှတ်ရသေး"}\n'
                       f'Increment: {money(int(increment))}\nPaused: {paused}\n'
-                      'Currency: Coin · Owner USD rate: $100 = 500 coin\n'
+                      'Currency: Coin · Owner USD rate: $100 = 2500 coin\n'
                       'Bid edits: immediate; bursts wait for 2 quiet seconds\n'
                       f'Owners: {", ".join(map(str, sorted(self.config.owners)))}')
         elif command == "auctions":

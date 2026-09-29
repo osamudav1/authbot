@@ -116,11 +116,6 @@ class PvPStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(RuleError, "30000"):
             self.store.play_solo_pvp("too-large", -100123, 1, "Player 1", cents("30001"), "heads", "tails", now=100)
 
-    def test_owner_adjustment_maximum_is_2500_usd(self):
-        message = SimpleNamespace(reply_to_message=SimpleNamespace(sender_chat=None, from_user=SimpleNamespace(id=77, is_bot=False)))
-        with self.assertRaisesRegex(RuleError, "2500"):
-            auth_adjustment(["+$2501"], message)
-
     def test_dailycoin_rewards_500_to_2000_and_locks_for_24_hours(self):
         first = self.store.claim_dailycoin(77, now=1000)
         self.assertTrue(first["claimed"])
@@ -226,21 +221,21 @@ class PvPStoreTests(unittest.TestCase):
         message = SimpleNamespace(reply_to_message=reply)
         owner_bot = object.__new__(AuctionBot)
         self.assertEqual(auth_adjustment(["+", "$100", "gift"], message),
-                         (77, cents("500"), "gift"))
+                         (77, cents("2500"), "gift"))
         self.assertEqual(auth_adjustment(["-$5"], message),
-                         (77, -cents("25"), ""))
+                         (77, -cents("125"), ""))
         self.assertEqual(owner_bot.owner_wallet_adjustment("credit", ["77", "$100", "gift"], message),
-                         (77, cents("500"), "gift"))
+                         (77, cents("2500"), "gift"))
         self.assertEqual(owner_bot.owner_wallet_adjustment("debit", ["-$5"], message),
-                         (77, -cents("25"), ""))
+                         (77, -cents("125"), ""))
 
-    def test_raw_reply_plus_100_converts_at_rate_100_usd_to_500_coins(self):
-        self.assertEqual(usd_to_coins("$100"), cents("500"))
-        self.assertEqual(usd_to_coins("100.50"), cents("502.50"))
+    def test_raw_reply_plus_100_converts_at_rate_100_usd_to_2500_coins(self):
+        self.assertEqual(usd_to_coins("$100"), cents("2500"))
+        self.assertEqual(usd_to_coins("100.50"), cents("2512.50"))
         self.assertEqual(signed_owner_message_args("+100"), ["+100"])
         self.assertEqual(signed_owner_message_args("-$5 correction"), ["-$5", "correction"])
-        self.assertEqual(usd_equivalent(cents("500")), "$100")
-        self.assertEqual(usd_equivalent(cents("502.50")), "$100.50")
+        self.assertEqual(usd_equivalent(cents("2500")), "$100")
+        self.assertEqual(usd_equivalent(cents("2512.50")), "$100.50")
 
     def test_owner_can_credit_and_debit_by_reply_in_the_pvp_group(self):
         class FakeBot:
@@ -282,10 +277,10 @@ class PvPStoreTests(unittest.TestCase):
             update = SimpleNamespace(message=message, effective_chat=chat, effective_user=user)
             asyncio.run(bot.message(update, context))
 
-        self.assertEqual(self.store.wallet_balance(77)["available"], cents("500"))
+        self.assertEqual(self.store.wallet_balance(77)["available"], cents("2500"))
         self.assertEqual(len(fake_bot.sent), 2)
         self.assertIn("USD $100", fake_bot.sent[0]["text"])
-        self.assertIn("500coin", fake_bot.sent[0]["text"])
+        self.assertIn("2500coin", fake_bot.sent[0]["text"])
 
     def test_pvp_coin_gift_is_atomic_idempotent_and_group_limited(self):
         self.credit(1, cents("1000"))
@@ -353,7 +348,7 @@ class PvPStoreTests(unittest.TestCase):
             fake, 77, cents("500"), cents("600")))
         self.assertTrue(delivered)
         self.assertEqual(fake.sent[0]["chat_id"], 77)
-        self.assertIn("USD $100", fake.sent[0]["text"])
+        self.assertIn("USD $20", fake.sent[0]["text"])
         self.assertIn("500coin", fake.sent[0]["text"])
         self.assertIn("600coin", fake.sent[0]["text"])
 

@@ -167,7 +167,7 @@ History ကို နောက်ဆုံး bid ပါဝင်ခဲ့သည
 
 ### Owner USD ထည့်/နုတ်ပြီး coin ပြောင်းခြင်း
 
-**Owner ID စာရင်းထဲရှိသူပဲ** `/auth`, `/credit`, `/debit` ကို သုံးနိုင်သည် — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ Owner သတ်မှတ်တဲ့ ပမာဏတွေက USD ဖြစ်ပြီး `$100 = 500 coin` နှုန်းဖြင့် balance ထဲ coin ပြောင်းထည့်/နုတ်ပေးသည်။ ဥပမာ user ၏ message ကို reply လုပ်ပြီး `+100` ပို့လျှင် 500 coin ထည့်ပေးမည်။ ID ဖြင့် သို့မဟုတ် reply ဖြင့် ပြင်နိုင်ပြီး ကိုယ့် message ကို reply လုပ်ခြင်းဖြင့် owner ကိုယ်တိုင်လည်း wallet ပြင်နိုင်သည်။ Positive credit ရလျှင် bot က user ၏ bot DM သို့ USD နဲ့ coin နှစ်မျိုးလုံးပြသော receipt ပို့မည်; DM ကို အရင် `/start` လုပ်ထားရန်လိုနိုင်သည်။ `/auth` သည် သတ်မှတ်ထားသော discussion group မှာလည်း အသုံးပြုနိုင်သည်။ ဥပမာ:
+**Owner ID စာရင်းထဲရှိသူပဲ** `/auth`, `/credit`, `/debit` ကို သုံးနိုင်သည် — group admin ဖြစ်ရုံနှင့် မသုံးနိုင်ပါ။ Owner သတ်မှတ်တဲ့ ပမာဏတွေက USD ဖြစ်ပြီး `$100 = 2500 coin` နှုန်းဖြင့် balance ထဲ coin ပြောင်းထည့်/နုတ်ပေးသည်။ ဥပမာ user ၏ message ကို reply လုပ်ပြီး `+100` ပို့လျှင် 2500 coin ထည့်ပေးမည်။ ID ဖြင့် သို့မဟုတ် reply ဖြင့် ပြင်နိုင်ပြီး ကိုယ့် message ကို reply လုပ်ခြင်းဖြင့် owner ကိုယ်တိုင်လည်း wallet ပြင်နိုင်သည်။ Positive credit ရလျှင် bot က user ၏ bot DM သို့ USD နဲ့ coin နှစ်မျိုးလုံးပြသော receipt ပို့မည်; DM ကို အရင် `/start` လုပ်ထားရန်လိုနိုင်သည်။ `/auth` သည် သတ်မှတ်ထားသော discussion group မှာလည်း အသုံးပြုနိုင်သည်။ ဥပမာ:
 
 ```text
 # user message ကို reply လုပ်ပြီး raw amount ပို့ရန်
