@@ -95,14 +95,14 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(self.store.wallet_balance(1)["total"], 180000)
         self.assertEqual(self.store.wallet_balance(2)["total"], 20000)
 
-    def test_cannot_accept_a_sixth_simultaneous_round(self):
+    def test_cannot_start_a_fourth_simultaneous_round(self):
         for user_id in range(1, 13):
             self.credit(user_id, 50000)
-        for index in range(5):
+        for index in range(3):
             game = self.request(f"game-{index}", index * 2 + 1, index * 2 + 2)
             self.store.accept_pvp(game["id"], game["target_id"], 60, now=100)
-        with self.assertRaisesRegex(RuleError, "ပွဲ ၅ ပွဲ"):
-            self.request("game-5", 11, 12)
+        with self.assertRaisesRegex(RuleError, "game ၃ ပွဲ"):
+            self.request("game-3", 7, 8)
 
     def test_coin_amount_display(self):
         self.assertEqual(cents("10000"), 1_000_000)

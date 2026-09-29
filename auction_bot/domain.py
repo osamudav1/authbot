@@ -7,6 +7,7 @@ class RuleError(ValueError):
 
 
 MIN_PVP_WAGER = 25_000  # 250 coins, represented as 100 internal subunits per coin.
+MAX_ACTIVE_PVP_GAMES = 3
 PVP_REQUEST_TIMEOUT_SECONDS = 15
 BOOM_TURN_TIMEOUT_SECONDS = 60
 USD_TO_COIN_RATE = 5  # $100 = 500 coins.

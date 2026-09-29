@@ -4,7 +4,7 @@ import time
 import random
 from contextlib import contextmanager
 from pathlib import Path
-from .domain import MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
+from .domain import MAX_ACTIVE_PVP_GAMES, MIN_PVP_WAGER, USD_TO_COIN_RATE, RuleError, cents, money, usd_to_coins
 
 
 class Store:
@@ -415,8 +415,8 @@ class Store:
         with self.transaction():
             if str(group_id) != self.get("pvp_group_id"):
                 raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
-            if self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (group_id,)).fetchone()[0] >= 5:
-                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ပွဲအသစ်တောင်းနိုင်ပါတယ်။")
+            if self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (group_id,)).fetchone()[0] >= MAX_ACTIVE_PVP_GAMES:
+                raise RuleError("လက်ရှိ game ၃ ပွဲ ပြည့်နေပါပြီ။ တစ်ပွဲပြီးမှ ပွဲအသစ် စနိုင်ပါမည်။")
             for user_id in (requester_id, target_id):
                 locked = self.db.execute("SELECT status FROM pvp_games WHERE group_id=? AND status IN ('pending','running') AND (requester_id=? OR target_id=?) LIMIT 1", (group_id,user_id,user_id)).fetchone()
                 if locked:
@@ -487,8 +487,8 @@ class Store:
             if str(row["group_id"]) != self.get("pvp_group_id"):
                 raise RuleError("ဒီ group မှာ PvP မကစားနိုင်တော့ပါ။")
             active = self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (row["group_id"],)).fetchone()[0]
-            if active >= 5:
-                raise RuleError("လက်ရှိ ပွဲ ၅ ပွဲ ကစားနေပါတယ်။ တစ်ပွဲပြီးမှ ထပ်စနိုင်ပါတယ်။")
+            if active >= MAX_ACTIVE_PVP_GAMES:
+                raise RuleError("လက်ရှိ game ၃ ပွဲ ပြည့်နေပါပြီ။ တစ်ပွဲပြီးမှ ပွဲအသစ် စနိုင်ပါမည်။")
             for user_id in (row["requester_id"],row["target_id"]):
                 if self.db.execute("SELECT 1 FROM pvp_games WHERE group_id=? AND status='running' AND (requester_id=? OR target_id=?) LIMIT 1", (row["group_id"],user_id,user_id)).fetchone():
                     raise RuleError("This User Playing")
