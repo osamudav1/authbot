@@ -264,9 +264,8 @@ def boom_markup(game):
 
 
 def solo_boom_prize(amount, safe_count):
-    # Safe 1 = 1.2x, Safe 2 = 1.4x, Safe 3 = 1.6x, etc.
-    base = amount * 2
-    return (base * (10 + 2 * safe_count) + 5) // 10
+    # Solo Boom uses the wager as base: Safe 1 = 1.2x, Safe 2 = 1.4x.
+    return (amount * (10 + 2 * safe_count) + 5) // 10
 
 
 def boom_text(game):

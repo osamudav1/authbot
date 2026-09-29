@@ -7,6 +7,8 @@ from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
 from .domain import BOOM_TURN_TIMEOUT_SECONDS, MIN_PVP_WAGER, PVP_REQUEST_TIMEOUT_SECONDS, RuleError, money
 
+PVP_ANIMATION_INTERVAL_SECONDS = 1.2
+
 
 class MongoStore:
     def __init__(self, uri, database):
@@ -733,7 +735,7 @@ class MongoStore:
                 eid=self._next("wallet_events",s)
                 self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=uid,delta=-row["amount"],kind="pvp_stake",
                     note=f"PvP stake · {game_id}",actor_id=actor_id,auction_id=None,event_key=f"pvp:{game_id}:stake:{uid}",created=at),session=s)
-            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+1,"step":0,"final_percent":final_percent,
+            self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"status":"running","next_at":at+PVP_ANIMATION_INTERVAL_SECONDS,"step":0,"final_percent":final_percent,
                 # Only the third concurrent round can free a slot from a full set of three.
                 "slot_notified": 0 if active_rounds == 2 else 1}},session=s)
             return self._pvp_game(game_id,s)
@@ -750,7 +752,7 @@ class MongoStore:
             if row["status"]!="running" or row["next_at"] is None or row["next_at"]>at:return row
             step=row["step"]+1
             if step<5:
-                self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"step":step,"next_at":at+1}},session=s)
+                self.db.pvp_games.update_one({"_id":game_id,"status":"running"},{"$set":{"step":step,"next_at":at+PVP_ANIMATION_INTERVAL_SECONDS}},session=s)
                 return self._pvp_game(game_id,s)
             requester_percent = row["final_percent"]
             target_percent = 100 - requester_percent
