@@ -434,8 +434,8 @@ class MongoStore:
     def start_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
             raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
-        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
-            raise RuleError("Solo PvP result မမှန်ပါ။")
+        if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         def start(s):
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
@@ -467,12 +467,16 @@ class MongoStore:
     def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
             raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
-        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
-            raise RuleError("Solo PvP result မမှန်ပါ။")
+        if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         def play(s):
             at = time.time() if now is None else now
             if str(group_id) != str(self.get("pvp_group_id", session=s)):
                 raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self._active_group_games(group_id, s) >= MAX_ACTIVE_PVP_GAMES:
+                raise RuleError("လက်ရှိ game ၃ ပွဲ ပြည့်နေပါပြီ။ တစ်ပွဲပြီးမှ ပွဲအသစ် စနိုင်ပါမည်။")
+            if self._player_locked(group_id, user_id, s):
+                raise RuleError("ဒီ user က PvP/Boom game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
             balance = self.wallet_balance(user_id, s)
             if balance["available"] < amount:
                 raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
@@ -491,7 +495,7 @@ class MongoStore:
                     note=f"Solo PvP prize · {game_id}",actor_id=None,auction_id=None,event_key=f"pvp:{game_id}:prize",created=at),session=s)
             self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,requester_id=user_id,
                 requester_name=user_name[:64],target_id=0,target_name="House",amount=amount,status="finished",
-                message_id=0,created=at,next_at=None,step=5,final_percent=100 if result == "higher" else 0,
+                message_id=0,created=at,next_at=None,step=5,final_percent=100 if result == "heads" else 0,
                 winner_id=user_id if won else 0,slot_notified=1,mode="solo",choice=choice,result=result),session=s)
             return self._pvp_game(game_id, s)
         return self._tx(play)

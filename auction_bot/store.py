@@ -437,11 +437,15 @@ class Store:
         now = int(time.time()) if now is None else int(now)
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
             raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
-        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
-            raise RuleError("Solo PvP result မမှန်ပါ။")
+        if choice not in {"heads", "tails"} or result not in {"heads", "tails"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။ h=Heads, t=Tails ကိုသုံးပါ။")
         with self.transaction():
             if str(group_id) != self.get("pvp_group_id"):
                 raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            if self.db.execute("SELECT COUNT(*) FROM pvp_games WHERE group_id=? AND status='running'", (group_id,)).fetchone()[0] >= MAX_ACTIVE_PVP_GAMES:
+                raise RuleError("လက်ရှိ game ၃ ပွဲ ပြည့်နေပါပြီ။ တစ်ပွဲပြီးမှ ပွဲအသစ် စနိုင်ပါမည်။")
+            if self.db.execute("SELECT 1 FROM pvp_games WHERE group_id=? AND status IN ('pending','running') AND (requester_id=? OR target_id=?) LIMIT 1", (group_id,user_id,user_id)).fetchone():
+                raise RuleError("ဒီ user က PvP/Boom game တစ်ခုမှာ ပါဝင်နေပြီးသားပါ။ ပွဲပြီးမှ ထပ်ကစားနိုင်ပါတယ်။")
             self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (user_id,))
             balance = self.wallet_balance(user_id)
             if balance["available"] < amount:
@@ -461,7 +465,7 @@ class Store:
               (id,group_id,requester_id,requester_name,target_id,target_name,amount,status,created,next_at,step,final_percent,winner_id,slot_notified,mode,choice,result)
               VALUES (?,?,?,?,?,?,?,'finished',?,?,?,?,?,?,?, ?,?)""",
               (game_id, group_id, user_id, user_name[:64], 0, "House", amount, now, None, 5,
-               100 if result == "higher" else 0, user_id if won else 0, 1, "solo", choice, result))
+               100 if result == "heads" else 0, user_id if won else 0, 1, "solo", choice, result))
             return self._pvp_game(game_id)
 
     def cancel_pvp(self, game_id, actor_id):

@@ -77,7 +77,7 @@ AUCTION_GROUP_COMMANDS = [
 ]
 PVP_GROUP_COMMANDS = [
     BotCommand("bid", "Auction ID နဲ့ bid ဆွဲရန်: /bid AUCTION_ID 10.50"),
-    BotCommand("pvp", "Reply duel သို့ solo higher/lower: /pvp 250 h"),
+    BotCommand("pvp", "Reply duel သို့ coin flip: /pvp 250 h/t"),
     BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
     BotCommand("replay", "Stuck ဖြစ်နေသော ကိုယ့် Solo game ကို refund/ရှင်းရန်"),
     BotCommand("btop", "Coin အများဆုံး Top 10"),
@@ -200,29 +200,21 @@ def pvp_animation_text(game):
         digest = hashlib.sha256(f'{game["id"]}:{step}'.encode()).digest()
         shown = 10 + (digest[0] % 81)
     if game.get("mode") == "solo":
-        # Solo uses the same two-step suspense animation as a duel, with
-        # Higher/Lower as the two sides instead of two Telegram users.
-        higher = shown if game.get("result") == "higher" else 100 - shown
-        lower = 100 - higher
-        filled = max(1, min(12, math.ceil(higher / 100 * 12)))
-        bar = "🟦" * filled + "🟥" * (12 - filled)
+        labels = {"heads": "Heads", "tails": "Tails", "higher": "Heads", "lower": "Tails"}
+        choice = labels.get(game.get("choice"), "Heads")
+        result = labels.get(game.get("result"), "Heads")
+        won = game.get("winner_id") == game.get("requester_id")
         text = (f'⚔️ <b>PvP · {money(game["amount"])} each</b>\n\n'
-                f'🟦 Higher— <b>{higher}%</b>\n\n{bar}\n\n'
-                f'🟥 Lower— <b>{lower}%</b>')
+                f'🪙 <b>Coin Flip</b>\n\n'
+                f'🎯 Your Choice — <b>{choice}</b>\n'
+                f'🪙 Result — <b>{result}</b>')
         if game["status"] == "finished":
-            won = game.get("winner_id") == game.get("requester_id")
-            text += f'\n\n🎯 Your Choice — <b>{html.escape(game.get("choice", "higher"))}</b>'
-            text += f'\n🎲 Result — <b>{html.escape(game.get("result", "higher"))}</b>'
             if won:
                 text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game.get("prize", game["amount"] * 2))}'
-                if game.get("refund"):
-                    text += f'\n↩️ Refund: {money(game["refund"])}'
             else:
                 text += '\n\n❌ You lose\n🪙 Prize: 0coin'
-                if game.get("refund"):
-                    text += f'\n↩️ Refund: {money(game["refund"])}'
-        else:
-            text += "\n\nလောင်းကြေးကို ဖယ်ထားပြီး 2 round animation ပြီးတာနဲ့ redeem result ချက်ချင်းထွက်ပါမယ်။"
+            if game.get("refund"):
+                text += f'\n↩️ Refund: {money(game["refund"])}'
         return text
     second = 100 - shown
     filled = max(1, min(12, math.ceil(shown / 100 * 12)))
@@ -716,17 +708,16 @@ class AuctionBot:
         target = reply.from_user if reply and not reply.sender_chat else None
         if not target and len(args) == 2:
             amount = cents(args[0])
-            choice = {"h": "higher", "higher": "higher", "l": "lower", "lower": "lower"}.get(args[1].lower())
+            choice = {"h": "heads", "heads": "heads", "t": "tails", "tails": "tails"}.get(args[1].lower())
             if not choice:
-                raise RuleError("Solo PvP အတွက် /pvp 250 h သို့ /pvp 250 l ပုံစံရေးပါ။")
+                raise RuleError("Solo PvP အတွက် /pvp 250 h သို့ /pvp 250 t ပုံစံရေးပါ။ h=Heads, t=Tails")
             if amount < MIN_PVP_WAGER:
                 raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
-            result = secrets.choice(("higher", "lower"))
+            result = secrets.choice(("heads", "tails"))
             game_id = secrets.token_hex(8)
-            game = await self.store_call(self.store.start_solo_pvp, game_id, message.chat_id,
+            game = await self.store_call(self.store.play_solo_pvp, game_id, message.chat_id,
                                          user.id, user.full_name, amount, choice, result)
-            posted = await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
-            await self.store_call(self.store.set_pvp_message, game_id, posted.message_id)
+            await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
             return
         if len(args) != 1:
             raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")

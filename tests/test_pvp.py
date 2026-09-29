@@ -158,15 +158,16 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("group_id"), "-100123")
         self.assertEqual(self.store.get("pvp_group_id"), "-100123")
 
-    def test_solo_pvp_higher_lower_settles_immediately(self):
+    def test_solo_pvp_heads_tails_settles_immediately(self):
         self.credit(7, cents("500"))
-        game = self.store.play_solo_pvp("solo-1", -100123, 7, "Player 7", cents("250"), "higher", "higher", now=100)
+        game = self.store.play_solo_pvp("solo-1", -100123, 7, "Player 7", cents("250"), "tails", "tails", now=100)
         self.assertEqual(game["mode"], "solo")
         self.assertEqual(game["winner_id"], 7)
         self.assertEqual(self.store.wallet_balance(7)["total"], cents("750"))
 
         text = pvp_animation_text(game)
-        self.assertIn("Higher", text)
+        self.assertIn("🪙", text)
+        self.assertIn("Tails", text)
         self.assertIn("Your Choice", text)
         self.assertIn("Prize: 500coin", text)
 
