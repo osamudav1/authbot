@@ -189,7 +189,8 @@ class Store:
         now = int(time.time()) if now is None else now
         with self.transaction():
             row = self.auction(auction_id)
-            if row["group_id"] != chat_id or str(chat_id) != self.get("group_id"):
+            allowed_groups = {self.get("group_id"), self.get("pvp_group_id")}
+            if row["group_id"] != int(self.get("group_id") or 0) or str(chat_id) not in allowed_groups:
                 raise RuleError("သတ်မှတ်ထားတဲ့ group မှာပဲ bid ဆွဲနိုင်ပါတယ်။")
             if self.db.execute("SELECT 1 FROM bids WHERE chat_id=? AND message_id=?", (chat_id, message_id)).fetchone():
                 return False

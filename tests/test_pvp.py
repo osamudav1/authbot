@@ -158,6 +158,19 @@ class PvPStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get("group_id"), "-100123")
         self.assertEqual(self.store.get("pvp_group_id"), "-100123")
 
+    def test_separate_pvp_group_can_place_an_auction_bid(self):
+        self.store.target("channel_id", -100555)
+        self.store.target("group_id", -100999)
+        self.store.set("wallet_mode", 1)
+        auction_id = self.store.create({
+            "photo": "photo", "name": "Card", "anime": "Anime", "rarity": "SSR",
+            "start": cents("100"), "ends": 200,
+        }, now=100)
+        self.store.published(auction_id, 10, published_at=100)
+        self.credit(7, cents("100"))
+        self.assertTrue(self.store.bid(auction_id, 7, "Player 7", cents("100"), -100123, 55, now=101))
+        self.assertEqual(self.store.auction(auction_id)["highest"], cents("100"))
+
     def test_final_animation_shows_odds_and_winner(self):
         text = pvp_animation_text({
             "status": "finished", "final_percent": 60, "step": 5,

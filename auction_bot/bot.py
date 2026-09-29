@@ -77,6 +77,7 @@ AUCTION_GROUP_COMMANDS = [
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
 ]
 PVP_GROUP_COMMANDS = [
+    BotCommand("bid", "Auction ID နဲ့ bid ဆွဲရန်: /bid AUCTION_ID 10.50"),
     BotCommand("pvp", "ပြိုင်ဘက်ကို coin wager PvP စိန်ခေါ်ရန် (သူ့ message ကို reply လုပ်ပါ)"),
     BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
     BotCommand("btop", "Coin အများဆုံး Top 10"),
@@ -553,7 +554,13 @@ class AuctionBot:
                 return
             if command not in {"bid", "rules"}:
                 return
-            auction_id = await self.resolve(message)
+            pvp_bid = command == "bid" and self.pvp_group(update) and not self.group(update)
+            if pvp_bid:
+                if len(args) != 2 or not re.fullmatch(r"[0-9]{1,19}", args[0]):
+                    raise RuleError("PvP group မှာ /bid AUCTION_ID 10.50 ပုံစံရေးပါ။")
+                auction_id = int(args[0])
+            else:
+                auction_id = await self.resolve(message)
             if command == "rules" and auction_id:
                 await message.reply_text(await self.store_call(self.store.get, "rules"))
                 return
@@ -561,11 +568,11 @@ class AuctionBot:
                 return
             if not update.effective_user or update.effective_user.is_bot:
                 raise RuleError("User account နဲ့ပဲ bid ဆွဲနိုင်ပါတယ်။")
-            if len(args) != 1:
+            if not pvp_bid and len(args) != 1:
                 raise RuleError("ဒီ card ရဲ့ Comments ထဲမှာ /bid 10.50 ပုံစံရေးပါ။")
             if not auction_id:
                 raise RuleError("လေလံ post ရဲ့ Comments ထဲဝင်ပြီး post ကို reply လုပ်ပါ။")
-            amount = cents(args[0])
+            amount = cents(args[1] if pvp_bid else args[0])
             name = update.effective_user.full_name[:60]
             accepted = await self.store_call(self.store.bid, auction_id, update.effective_user.id,
                                              name, amount, message.chat_id, message.message_id)

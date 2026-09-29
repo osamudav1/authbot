@@ -191,7 +191,9 @@ class MongoStore:
         def bid(s):
             at=int(time.time()) if now is None else now
             row=self.auction(auction_id,s)
-            if row["group_id"]!=chat_id or str(chat_id)!=self.get("group_id",session=s):
+            allowed_groups = {str(self.get("group_id", session=s)),
+                              str(self.get("pvp_group_id", session=s))}
+            if row["group_id"] != int(self.get("group_id", session=s) or 0) or str(chat_id) not in allowed_groups:
                 raise RuleError("သတ်မှတ်ထားတဲ့ group မှာပဲ bid ဆွဲနိုင်ပါတယ်။")
             if self.db.bids.find_one(dict(chat_id=chat_id,message_id=message_id),session=s):return False
             if self.get("paused",session=s)=="1":raise RuleError("Owner က bidding ခဏရပ်ထားပါတယ်။")
