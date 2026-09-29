@@ -29,6 +29,7 @@ UPDATE_CONCURRENCY = 16
 WORKER_TICK_INTERVAL_SECONDS = 0.5
 OWNER_ACTIONS = {
     "zip": "Bot code ZIP ယူရန်: /zip (Owner DM only)",
+    "payout": "Bot ကပေးချေထားသော game payout စုစုပေါင်း: /payout (Owner only)",
     "new": "Card အသစ်တင်ရန်",
     "auctions": "လေလံစာရင်း",
     "view": "လေလံကြည့်ရန်: /view ID",
@@ -570,11 +571,9 @@ class AuctionBot:
                 elif command in {"menu", "history", "wins", "auctions", "balance", "bal", "bcoin", "transactions"}:
                     await self.user_command(command, args, message, update.effective_user)
                 return
-            if self.pvp_group(update) and command in {"dailycoin", "author", "pvp", "boom", "btop", "bal", "bcoin"}:
+            if self.pvp_group(update) and command in {"dailycoin", "pvp", "boom", "btop", "bal", "bcoin"}:
                 if command == "dailycoin":
                     await self.user_command(command, args, message, update.effective_user)
-                elif command == "author":
-                    await self.author_command(message)
                 elif command == "pvp":
                     await self.pvp_request(args, message, update.effective_user)
                 elif command == "boom":
@@ -593,9 +592,6 @@ class AuctionBot:
                     await message.reply_text(text)
                 elif command == "bcoin":
                     await self.pvp_gift_command(args, message, update.effective_user)
-                return
-            if command in {"author", "auther"} and (self.group(update) or self.pvp_group(update)):
-                await self.auther_command(message, context)
                 return
             if command == "bal":
                 if not update.effective_user or update.effective_user.is_bot:
@@ -868,7 +864,7 @@ class AuctionBot:
         if command in {"menu", "history", "wins", "balance", "bal", "transactions"}:
             await self.user_command(command, args, message, message.from_user)
             return
-        no_args = {"zip", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
+        no_args = {"zip", "payout", "start", "help", "panel", "new", "draftcancel", "auctions", "pause", "resume", "banned", "stats", "settings", "check", "welcome", "welcomehelp", "welcomecancel"}
         one_arg = {"view", "bids", "close", "cancelauction", "setchannel", "setgroup", "increment", "ban", "unban", "export", "wallet", "walletmode"}
         if (command in no_args and args) or (command in one_arg and len(args) != 1) or (command == "extend" and len(args) != 2):
             raise RuleError(OWNER_ACTIONS.get(command, "Parameter မလိုပါ။"))
@@ -1010,6 +1006,13 @@ class AuctionBot:
         elif command == "stats":
             rows, total, sales = await self.store_call(self.store.stats)
             result = "📊 Auctions\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows) + f"\nBids: {total}\nWinning bids (payment မစစ်ရသေး): {money(sales)}"
+        elif command == "payout":
+            payout = await self.store_call(self.store.payout_total)
+            result = (f'💸 Bot Game Payout Total\n\n'
+                      f'🪙 Total: {money(payout["total"])}\n'
+                      f'🏆 PvP Win: {money(payout["pvp_win"])}\n'
+                      f'↩️ PvP Refund: {money(payout["pvp_refund"])}\n'
+                      f'💣 Boom Win: {money(payout["boom_win"])}')
         else:
             raise RuleError("/panel မှာ command စာရင်းကြည့်ပါ။")
         await message.reply_text(result)
