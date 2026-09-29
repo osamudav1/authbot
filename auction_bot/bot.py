@@ -73,7 +73,6 @@ USER_COMMANDS = [
 AUCTION_GROUP_COMMANDS = [
     BotCommand("bid", "လေလံ comments မှာ /bid 10.50"),
     BotCommand("rules", "လေလံ comments မှာ စည်းကမ်းကြည့်ရန်"),
-    BotCommand("auther", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
 ]
 PVP_GROUP_COMMANDS = [
@@ -81,7 +80,6 @@ PVP_GROUP_COMMANDS = [
     BotCommand("pvp", "Reply duel သို့ solo higher/lower: /pvp 250 h"),
     BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
     BotCommand("btop", "Coin အများဆုံး Top 10"),
-    BotCommand("author", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
     BotCommand("bal", "ကိုယ့် coin လက်ကျန်စစ်ရန်"),
     BotCommand("bcoin", "သူ့ message ကို reply လုပ်ပြီး coin လက်ဆောင်ပို့ရန်"),
     BotCommand("dailycoin", "နေ့စဉ် coin reward ရယူရန်"),
