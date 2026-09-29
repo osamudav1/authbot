@@ -60,7 +60,8 @@ class Store:
           message_id INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL,
           next_at INTEGER, step INTEGER NOT NULL DEFAULT 0,
           final_percent INTEGER, winner_id INTEGER,
-          slot_notified INTEGER NOT NULL DEFAULT 0);
+          slot_notified INTEGER NOT NULL DEFAULT 0,
+          mode TEXT NOT NULL DEFAULT 'duel', choice TEXT, result TEXT);
         CREATE INDEX IF NOT EXISTS pvp_games_by_group_status ON pvp_games(group_id,status,next_at);
         CREATE INDEX IF NOT EXISTS pvp_games_by_players_status ON pvp_games(status,requester_id,target_id);
         """)
@@ -79,6 +80,12 @@ class Store:
             self.db.execute("ALTER TABLE auctions ADD COLUMN card_type TEXT NOT NULL DEFAULT ''")
         if "card_id" not in columns:
             self.db.execute("ALTER TABLE auctions ADD COLUMN card_id TEXT NOT NULL DEFAULT ''")
+        pvp_columns = {row[1] for row in self.db.execute("PRAGMA table_info(pvp_games)")}
+        for name, definition in (("mode", "TEXT NOT NULL DEFAULT 'duel'"),
+                                 ("choice", "TEXT"), ("result", "TEXT")):
+            if name not in pvp_columns:
+                with self.transaction():
+                    self.db.execute(f"ALTER TABLE pvp_games ADD COLUMN {name} {definition}")
         for key, value in [("wallet_mode", "0"), ("increment", "5000"), ("paused", "0"), ("rules", "Winner ကို owner က ဆက်သွယ်ပါမယ်။ Payment ကို owner နှင့် တိုက်ရိုက်ညှိပါ။")]:
             self.db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (key, value))
 
@@ -425,6 +432,37 @@ class Store:
 
     def set_pvp_message(self, game_id, message_id):
         self.db.execute("UPDATE pvp_games SET message_id=? WHERE id=? AND status='pending'", (message_id,game_id))
+
+    def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
+        now = int(time.time()) if now is None else int(now)
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။")
+        with self.transaction():
+            if str(group_id) != self.get("pvp_group_id"):
+                raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            self.db.execute("INSERT OR IGNORE INTO wallets(user_id) VALUES (?)", (user_id,))
+            balance = self.wallet_balance(user_id)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            won = choice == result
+            if won and balance["total"] - amount + amount * 2 > 99999999999:
+                raise RuleError("အနိုင်ရလျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            self.db.execute("UPDATE wallets SET balance=balance-? WHERE user_id=?", (amount, user_id))
+            self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,?,?,?,?,?)",
+                            (user_id, -amount, "pvp_stake", f"Solo PvP stake · {game_id}", user_id, f"pvp:{game_id}:stake", now))
+            if won:
+                prize = amount * 2
+                self.db.execute("UPDATE wallets SET balance=balance+? WHERE user_id=?", (prize, user_id))
+                self.db.execute("INSERT INTO wallet_events(user_id,delta,kind,note,actor_id,event_key,created) VALUES (?,?,?,?,?,?,?)",
+                                (user_id, prize, "pvp_win", f"Solo PvP prize · {game_id}", None, f"pvp:{game_id}:prize", now))
+            self.db.execute("""INSERT INTO pvp_games
+              (id,group_id,requester_id,requester_name,target_id,target_name,amount,status,created,next_at,step,final_percent,winner_id,slot_notified,mode,choice,result)
+              VALUES (?,?,?,?,?,?,?,'finished',?,?,?,?,?,?,?, ?,?)""",
+              (game_id, group_id, user_id, user_name[:64], 0, "House", amount, now, None, 5,
+               100 if result == "higher" else 0, user_id if won else 0, 1, "solo", choice, result))
+            return self._pvp_game(game_id)
 
     def cancel_pvp(self, game_id, actor_id):
         with self.transaction():

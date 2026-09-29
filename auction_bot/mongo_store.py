@@ -395,6 +395,38 @@ class MongoStore:
     def set_pvp_message(self,game_id,message_id):
         self.db.pvp_games.update_one({"_id":game_id,"status":"pending"},{"$set":{"message_id":message_id}})
 
+    def play_solo_pvp(self, game_id, group_id, user_id, user_name, amount, choice, result, now=None):
+        if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
+            raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+        if choice not in {"higher", "lower"} or result not in {"higher", "lower"}:
+            raise RuleError("Solo PvP result မမှန်ပါ။")
+        def play(s):
+            at = time.time() if now is None else now
+            if str(group_id) != str(self.get("pvp_group_id", session=s)):
+                raise RuleError("သတ်မှတ်ထားတဲ့ PvP group မှာပဲ ကစားနိုင်ပါတယ်။")
+            balance = self.wallet_balance(user_id, s)
+            if balance["available"] < amount:
+                raise RuleError(f"Coin မလုံလောက်ပါ။ လက်ရှိသုံးနိုင်တာ {money(balance['available'])} ပါ။")
+            won = choice == result
+            if won and balance["total"] - amount + amount * 2 > 99999999999:
+                raise RuleError("အနိုင်ရလျှင် wallet limit ကျော်နိုင်ပါတယ်။")
+            self.db.wallets.update_one({"_id": user_id}, {"$inc": {"balance": -amount}}, upsert=True, session=s)
+            eid = self._next("wallet_events", s)
+            self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=user_id,delta=-amount,kind="pvp_stake",
+                note=f"Solo PvP stake · {game_id}",actor_id=user_id,auction_id=None,event_key=f"pvp:{game_id}:stake",created=at),session=s)
+            if won:
+                prize = amount * 2
+                self.db.wallets.update_one({"_id": user_id}, {"$inc": {"balance": prize}}, session=s)
+                eid = self._next("wallet_events", s)
+                self.db.wallet_events.insert_one(dict(_id=eid,id=eid,user_id=user_id,delta=prize,kind="pvp_win",
+                    note=f"Solo PvP prize · {game_id}",actor_id=None,auction_id=None,event_key=f"pvp:{game_id}:prize",created=at),session=s)
+            self.db.pvp_games.insert_one(dict(_id=game_id,id=game_id,group_id=group_id,requester_id=user_id,
+                requester_name=user_name[:64],target_id=0,target_name="House",amount=amount,status="finished",
+                message_id=0,created=at,next_at=None,step=5,final_percent=100 if result == "higher" else 0,
+                winner_id=user_id if won else 0,slot_notified=1,mode="solo",choice=choice,result=result),session=s)
+            return self._pvp_game(game_id, s)
+        return self._tx(play)
+
     def create_boom(self, game_id, group_id, requester_id, requester_name, target_id, target_name, amount, now=None):
         if type(amount) is not int or not MIN_PVP_WAGER <= amount <= 99999999999:
             raise RuleError("Boom အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")

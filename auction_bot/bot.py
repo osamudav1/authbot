@@ -77,7 +77,7 @@ AUCTION_GROUP_COMMANDS = [
 ]
 PVP_GROUP_COMMANDS = [
     BotCommand("bid", "Auction ID နဲ့ bid ဆွဲရန်: /bid AUCTION_ID 10.50"),
-    BotCommand("pvp", "ပြိုင်ဘက်ကို coin wager PvP စိန်ခေါ်ရန် (သူ့ message ကို reply လုပ်ပါ)"),
+    BotCommand("pvp", "Reply duel သို့ solo higher/lower: /pvp 250 h"),
     BotCommand("boom", "ပြိုင်ဘက်ကို Boom game စိန်ခေါ်ရန်"),
     BotCommand("btop", "Coin အများဆုံး Top 10"),
     BotCommand("author", "နောက်ဆုံးလေလံပုံအောက်တွင် inline search တပ်ရန်"),
@@ -190,6 +190,20 @@ def pvp_payouts(game):
 
 
 def pvp_animation_text(game):
+    if game.get("mode") == "solo":
+        choice = game.get("choice", "higher")
+        result = game.get("result", "higher")
+        won = game.get("winner_id") == game.get("requester_id")
+        text = (f'⚔️ <b>Solo PvP · {money(game["amount"])}</b>\n\n'
+                f'🟦 Higher\n\n🟥 Lower\n\n'
+                f'🎯 Your Choice — <b>{html.escape(choice)}</b>\n'
+                f'🎲 Result — <b>{html.escape(result)}</b>\n\n'
+                f'You Last Click - {html.escape(choice)}')
+        if won:
+            text += f'\n\n🏆 Winner: {pvp_name(game["requester_id"], game["requester_name"])}\n🪙 Prize: {money(game["amount"] * 2)}'
+        else:
+            text += '\n\n❌ You lose\n🪙 Prize: 0coin'
+        return text
     first = game["final_percent"]
     if game["status"] in {"pending", "finished"}:
         shown = 50 if game["status"] == "pending" else first
@@ -660,10 +674,22 @@ class AuctionBot:
     async def pvp_request(self, args, message, user):
         if not user or user.is_bot:
             raise RuleError("Telegram user account နဲ့ပဲ PvP ကစားနိုင်ပါတယ်။")
-        if len(args) != 1:
-            raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")
         reply = message.reply_to_message
         target = reply.from_user if reply and not reply.sender_chat else None
+        if not target and len(args) == 2:
+            amount = cents(args[0])
+            choice = {"h": "higher", "higher": "higher", "l": "lower", "lower": "lower"}.get(args[1].lower())
+            if not choice:
+                raise RuleError("Solo PvP အတွက် /pvp 250 h သို့ /pvp 250 l ပုံစံရေးပါ။")
+            if amount < MIN_PVP_WAGER:
+                raise RuleError("PvP အနည်းဆုံးလောင်းကြေး 250 coin ဖြစ်ရပါမယ်။")
+            result = secrets.choice(("higher", "lower"))
+            game = await self.store_call(self.store.play_solo_pvp, secrets.token_hex(8), message.chat_id,
+                                         user.id, user.full_name, amount, choice, result)
+            await message.reply_text(pvp_animation_text(game), parse_mode="HTML")
+            return
+        if len(args) != 1:
+            raise RuleError("ပြိုင်ဘက်ရဲ့ message ကို reply လုပ်ပြီး /pvp 500 သို့မဟုတ် ပိုများသော coin ပမာဏရေးပါ။")
         if not target or target.is_bot:
             raise RuleError("PvP လုပ်မယ့် user ရဲ့ message ကို reply လုပ်ပါ။")
         if target.id == user.id:
