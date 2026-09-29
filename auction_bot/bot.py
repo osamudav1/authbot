@@ -1010,7 +1010,8 @@ class AuctionBot:
                       f'🪙 Total: {money(payout["total"])}\n'
                       f'🏆 PvP Win: {money(payout["pvp_win"])}\n'
                       f'↩️ PvP Refund: {money(payout["pvp_refund"])}\n'
-                      f'💣 Boom Win: {money(payout["boom_win"])}')
+                      f'💣 Boom Win: {money(payout["boom_win"])}\n'
+                      f'🔥 Streak Reward: {money(payout["streak_reward"])}')
         else:
             raise RuleError("/panel မှာ command စာရင်းကြည့်ပါ။")
         await message.reply_text(result)

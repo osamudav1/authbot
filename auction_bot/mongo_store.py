@@ -326,7 +326,7 @@ class MongoStore:
     def wallet_history(self,user_id):return [self._clean(r) for r in self.db.wallet_events.find({"user_id":user_id}).sort("id",-1).limit(10)]
 
     def payout_total(self):
-        kinds = ("pvp_win", "pvp_refund", "boom_win")
+        kinds = ("pvp_win", "pvp_refund", "boom_win", "streak_reward")
         rows = list(self.db.wallet_events.aggregate([
             {"$match": {"kind": {"$in": list(kinds)}, "delta": {"$gt": 0}}},
             {"$group": {"_id": "$kind", "total": {"$sum": "$delta"}}},
